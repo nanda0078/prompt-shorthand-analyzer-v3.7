@@ -60,6 +60,38 @@ export function renderPromptInput({
     ? (uploadedImage.detectedAspectRatio || (uploadedImage.width && uploadedImage.height ? detectClosestAspectRatio(uploadedImage.width, uploadedImage.height) : '1:1'))
     : null;
 
+  let modeTipText = '💡 Menganalisis seluruh teks prompt secara semantik tanpa batas kategori atau batasan topik.';
+  if (activeMode === 'BACKGROUND_ANALYSIS') {
+    modeTipText = '💡 Gambar dianalisis langsung sebagai SOURCE OF TRUTH untuk profil latar belakang &amp; acuan spasial penempatan subjek.';
+  } else if (activeMode === 'TWO_WORLDS') {
+    modeTipText = '💡 Gambar dianalisis langsung sebagai SOURCE OF TRUTH untuk sintesis prompt 2 Dunia &amp; rekomendasi shorthand.';
+  } else if (activeMode === 'IMAGE_TO_PROMPT') {
+    modeTipText = '💡 Gambar dianalisis langsung sebagai SOURCE OF TRUTH untuk menghasilkan deskripsi visual 13 atribut &amp; rekomendasi shorthand.';
+  } else if (activeMode === 'COLOUR_GRADING' && uploadedImage) {
+    modeTipText = '💡 Mendiagnosis parameter warna, tone curve, saturasi &amp; merekomendasikan seluruh shorthand colour grading yang relevan tanpa batasan jumlah.';
+  } else if (activeMode === 'SHORTHAND_IMPROVE' && uploadedImage) {
+    modeTipText = '💡 Mendiagnosis seluruh parameter visual &amp; merekomendasikan seluruh shorthand perbaikan yang relevan tanpa batasan jumlah.';
+  }
+
+  let buttonText = isOnlineActive ? '🌐 Analisis Prompt' : 'Analisis Prompt';
+  if (isAnalyzing) {
+    if (activeMode === 'BACKGROUND_ANALYSIS') buttonText = '🏞️ Menganalisis Latar Belakang...';
+    else if (activeMode === 'TWO_WORLDS') buttonText = '🌐 Menganalisis 2 Dunia...';
+    else if (activeMode === 'IMAGE_TO_PROMPT') buttonText = '🔍 Menganalisis Gambar...';
+    else if (activeMode === 'COLOUR_GRADING' && uploadedImage) buttonText = '🎨 Mendiagnosis Colour Grading...';
+    else if (activeMode === 'SHORTHAND_IMPROVE' && uploadedImage) buttonText = '🛠️ Mendiagnosis Gambar...';
+    else if (activeMode === 'COLOUR_GRADING') buttonText = '🎨 Menganalisis Colour Grading...';
+    else buttonText = isOnlineActive ? 'Mencari Online...' : 'Menganalisis...';
+  } else {
+    if (activeMode === 'BACKGROUND_ANALYSIS') buttonText = '🏞️ Analisa Latar Belakang';
+    else if (activeMode === 'TWO_WORLDS') buttonText = '🌐 Analisa 2 Dunia → Prompt';
+    else if (activeMode === 'IMAGE_TO_PROMPT') buttonText = '🔍 Analisa Gambar → Prompt';
+    else if (activeMode === 'COLOUR_GRADING' && uploadedImage) buttonText = '🎨 Analisa Colour Grading Gambar';
+    else if (activeMode === 'COLOUR_GRADING') buttonText = '🎨 Analisa Colour Grading';
+    else if (activeMode === 'SHORTHAND_IMPROVE' && uploadedImage) buttonText = '🛠️ Analisa Perbaikan Gambar';
+    else if (activeMode === 'SHORTHAND_IMPROVE') buttonText = '🛠️ Analisa Shorthand &amp; Perbaikan';
+  }
+
   const html = `
     <section class="panel analyzer-card" id="card-input">
       <div class="card-header">
@@ -68,7 +100,7 @@ export function renderPromptInput({
           <h2>INPUT &amp; MODE ANALISIS</h2>
         </div>
         <div style="display: flex; gap: 0.4rem;">
-          ${(activeMode !== 'IMAGE_TO_PROMPT' && activeMode !== 'TWO_WORLDS') ? `
+          ${(activeMode !== 'IMAGE_TO_PROMPT' && activeMode !== 'TWO_WORLDS' && activeMode !== 'BACKGROUND_ANALYSIS') ? `
             <button type="button" class="btn btn-outline btn-xs" id="btn-clear-prompt" title="Kosongkan teks">
               Kosongkan
             </button>
@@ -88,6 +120,10 @@ export function renderPromptInput({
         <button type="button" class="mode-tab-btn ${activeMode === 'IMAGE_TO_PROMPT' ? 'active' : ''}" data-mode="IMAGE_TO_PROMPT">
           <span>🔍</span>
           <span>Analisa Gambar → Prompt</span>
+        </button>
+        <button type="button" class="mode-tab-btn ${activeMode === 'BACKGROUND_ANALYSIS' ? 'active' : ''}" data-mode="BACKGROUND_ANALYSIS">
+          <span>🏞️</span>
+          <span>Analisa Latar Belakang/background</span>
         </button>
         <button type="button" class="mode-tab-btn ${activeMode === 'TWO_WORLDS' ? 'active' : ''}" data-mode="TWO_WORLDS">
           <span>🌐</span>
@@ -122,8 +158,8 @@ export function renderPromptInput({
         </div>
       </div>
 
-      <!-- IMAGE UPLOAD SECTION (MODE 2, MODE 2 DUNIA, MODE 3 & MODE COLOUR GRADING) -->
-      ${(activeMode === 'IMAGE_TO_PROMPT' || activeMode === 'TWO_WORLDS' || activeMode === 'SHORTHAND_IMPROVE' || activeMode === 'COLOUR_GRADING') ? `
+      <!-- IMAGE UPLOAD SECTION (MODE 2, BACKGROUND, MODE 2 DUNIA, MODE 3 & MODE COLOUR GRADING) -->
+      ${(activeMode === 'IMAGE_TO_PROMPT' || activeMode === 'BACKGROUND_ANALYSIS' || activeMode === 'TWO_WORLDS' || activeMode === 'SHORTHAND_IMPROVE' || activeMode === 'COLOUR_GRADING') ? `
         <div class="image-upload-wrapper" id="image-upload-wrapper">
           <input type="file" id="image-file-input" ${activeMode === 'COLOUR_GRADING' ? 'multiple' : ''} accept="image/*, .jfif, .jpg, .jpeg, .png, .webp" style="display: none;" />
           ${uploadedImage ? `
@@ -133,8 +169,8 @@ export function renderPromptInput({
                 <div class="image-filename">${uploadedImage.name || 'reference-source.jpg'}</div>
                 <div class="image-meta">
                   Ukuran: ${(uploadedImage.size ? (uploadedImage.size / 1024).toFixed(1) + ' KB' : 'Gambar Sumber')} &bull;
-                  <span style="color: ${activeMode === 'SHORTHAND_IMPROVE' ? '#c084fc' : (activeMode === 'COLOUR_GRADING' ? '#ec4899' : '#38bdf8')};">
-                    ${activeMode === 'SHORTHAND_IMPROVE' ? 'SOURCE OF TRUTH Diagnosis Perbaikan' : (activeMode === 'COLOUR_GRADING' ? 'SOURCE OF TRUTH Diagnosis Colour Grading' : (activeMode === 'TWO_WORLDS' ? 'SOURCE OF TRUTH Visual (2 Dunia)' : 'SOURCE OF TRUTH Visual'))}
+                  <span style="color: ${activeMode === 'SHORTHAND_IMPROVE' ? '#c084fc' : (activeMode === 'COLOUR_GRADING' ? '#ec4899' : (activeMode === 'BACKGROUND_ANALYSIS' ? '#10b981' : '#38bdf8'))};">
+                    ${activeMode === 'SHORTHAND_IMPROVE' ? 'SOURCE OF TRUTH Diagnosis Perbaikan' : (activeMode === 'COLOUR_GRADING' ? 'SOURCE OF TRUTH Diagnosis Colour Grading' : (activeMode === 'BACKGROUND_ANALYSIS' ? 'SOURCE OF TRUTH Visual (Latar Belakang)' : (activeMode === 'TWO_WORLDS' ? 'SOURCE OF TRUTH Visual (2 Dunia)' : 'SOURCE OF TRUTH Visual')))}
                   </span>
                 </div>
               </div>
@@ -155,18 +191,22 @@ export function renderPromptInput({
                   ? 'Tarik &amp; lepas gambar yang ingin didiagnosis &amp; di-colour grade di sini, atau klik untuk memilih file'
                   : (activeMode === 'SHORTHAND_IMPROVE' 
                     ? 'Tarik &amp; lepas gambar yang ingin didiagnosis &amp; diperbaiki di sini, atau klik untuk memilih file' 
-                    : (activeMode === 'TWO_WORLDS'
-                      ? 'Tarik &amp; lepas gambar referensi di sini, atau klik untuk memilih file (Mode 2 Dunia)'
-                      : 'Tarik &amp; lepas gambar referensi di sini, atau klik untuk memilih file'))}
+                    : (activeMode === 'BACKGROUND_ANALYSIS'
+                      ? 'Tarik &amp; lepas gambar yang ingin dianalisis latar belakangnya di sini, atau klik untuk memilih file (Analisa Latar Belakang)'
+                      : (activeMode === 'TWO_WORLDS'
+                        ? 'Tarik &amp; lepas gambar referensi di sini, atau klik untuk memilih file (Mode 2 Dunia)'
+                        : 'Tarik &amp; lepas gambar referensi di sini, atau klik untuk memilih file')))}
               </div>
               <div class="dropzone-hint">
                 ${activeMode === 'COLOUR_GRADING'
                   ? 'Format: JPG, PNG, WEBP — Sistem mendiagnosis palet warna, tonal curve, temperature, kontras &amp; merekomendasikan shorthand colour grading (UNLIMITED)'
                   : (activeMode === 'SHORTHAND_IMPROVE' 
                     ? 'Format: JPG, PNG, WEBP — Sistem mendiagnosis kondisi visual &amp; merekomendasikan shorthand perbaikan (UNLIMITED)' 
-                    : (activeMode === 'TWO_WORLDS'
-                      ? 'Format yang didukung: JPG, PNG, WEBP (Gambar digunakan sebagai sumber analisis visual konsep 2 Dunia)'
-                      : 'Format yang didukung: JPG, PNG, WEBP (Gambar digunakan sebagai sumber analisis visual murni)'))}
+                    : (activeMode === 'BACKGROUND_ANALYSIS'
+                      ? 'Format yang didukung: JPG, PNG, WEBP (Fokus analisis mendalam pada latar belakang, dekorasi, pencahayaan &amp; hubungan spasial subjek)'
+                      : (activeMode === 'TWO_WORLDS'
+                        ? 'Format yang didukung: JPG, PNG, WEBP (Gambar digunakan sebagai sumber analisis visual konsep 2 Dunia)'
+                        : 'Format yang didukung: JPG, PNG, WEBP (Gambar digunakan sebagai sumber analisis visual murni)')))}
               </div>
             </div>
           `}
@@ -377,7 +417,7 @@ export function renderPromptInput({
       ` : ''}
 
       <!-- Textarea Input (Hanya untuk Mode 1, Mode 3, dan Colour Grading) -->
-      ${(activeMode !== 'IMAGE_TO_PROMPT' && activeMode !== 'TWO_WORLDS') ? `
+      ${(activeMode !== 'IMAGE_TO_PROMPT' && activeMode !== 'TWO_WORLDS' && activeMode !== 'BACKGROUND_ANALYSIS') ? `
         <div class="form-group" style="margin-bottom: 0.85rem;">
           <label for="prompt-textarea" style="display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.35rem;">
             ${((activeMode === 'SHORTHAND_IMPROVE' || activeMode === 'COLOUR_GRADING') && uploadedImage)
@@ -399,41 +439,11 @@ export function renderPromptInput({
       <!-- Actions Bar -->
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
         <small style="color: var(--text-muted); font-size: 0.775rem;">
-          ${activeMode === 'TWO_WORLDS'
-            ? '💡 Gambar dianalisis langsung sebagai SOURCE OF TRUTH untuk sintesis prompt 2 Dunia &amp; rekomendasi shorthand.'
-            : (activeMode === 'IMAGE_TO_PROMPT' 
-              ? '💡 Gambar dianalisis langsung sebagai SOURCE OF TRUTH untuk menghasilkan deskripsi visual 13 atribut &amp; rekomendasi shorthand.' 
-              : (activeMode === 'COLOUR_GRADING' && uploadedImage)
-                ? '💡 Mendiagnosis parameter warna, tone curve, saturasi &amp; merekomendasikan seluruh shorthand colour grading yang relevan tanpa batasan jumlah.'
-                : (activeMode === 'SHORTHAND_IMPROVE' && uploadedImage)
-                  ? '💡 Mendiagnosis seluruh parameter visual &amp; merekomendasikan seluruh shorthand perbaikan yang relevan tanpa batasan jumlah.'
-                  : '💡 Menganalisis seluruh teks prompt secara semantik tanpa batas kategori atau batasan topik.')}
+          ${modeTipText}
         </small>
         <button type="button" class="btn btn-primary" id="btn-run-analysis" ${isAnalyzing ? 'disabled' : ''}>
           <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
-          ${isAnalyzing 
-            ? (activeMode === 'TWO_WORLDS'
-                ? '🌐 Menganalisis 2 Dunia...'
-                : (activeMode === 'IMAGE_TO_PROMPT' 
-                    ? '🔍 Menganalisis Gambar...' 
-                    : (activeMode === 'COLOUR_GRADING' && uploadedImage)
-                      ? '🎨 Mendiagnosis Colour Grading...'
-                      : (activeMode === 'SHORTHAND_IMPROVE' && uploadedImage)
-                        ? '🛠️ Mendiagnosis Gambar...'
-                        : (activeMode === 'COLOUR_GRADING' ? '🎨 Menganalisis Colour Grading...' : (isOnlineActive ? 'Mencari Online...' : 'Menganalisis...'))))
-            : (activeMode === 'TWO_WORLDS'
-                ? '🌐 Analisa 2 Dunia → Prompt'
-                : (activeMode === 'IMAGE_TO_PROMPT' 
-                    ? '🔍 Analisa Gambar → Prompt' 
-                    : (activeMode === 'COLOUR_GRADING' && uploadedImage)
-                      ? '🎨 Analisa Colour Grading Gambar'
-                      : (activeMode === 'COLOUR_GRADING'
-                          ? '🎨 Analisa Colour Grading'
-                          : (activeMode === 'SHORTHAND_IMPROVE' && uploadedImage)
-                            ? '🛠️ Analisa Perbaikan Gambar'
-                            : (activeMode === 'SHORTHAND_IMPROVE' 
-                                ? '🛠️ Analisa Shorthand &amp; Perbaikan' 
-                                : (isOnlineActive ? '🌐 Analisis Prompt' : 'Analisis Prompt')))))}
+          ${buttonText}
         </button>
       </div>
     </section>
@@ -655,7 +665,7 @@ export function renderPromptInput({
 
       if (analyzeBtn) {
         analyzeBtn.addEventListener('click', () => {
-          if (activeMode === 'IMAGE_TO_PROMPT' || activeMode === 'TWO_WORLDS') {
+          if (activeMode === 'IMAGE_TO_PROMPT' || activeMode === 'TWO_WORLDS' || activeMode === 'BACKGROUND_ANALYSIS') {
             if (!uploadedImage) {
               if (fileInput) fileInput.click();
               return;

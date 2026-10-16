@@ -14,6 +14,7 @@ import { renderVisualTransformation } from './VisualTransformation.js';
 import { renderShorthandRecommendations } from './ShorthandRecommendations.js';
 import { renderSimilarShorthands } from './SimilarShorthands.js';
 import { renderExcludedShorthands } from './ExcludedShorthands.js';
+import { renderBackgroundAnalysisCard } from './BackgroundAnalysisCard.js';
 
 export function renderAnalyzerPage({
   analysisResult,
@@ -33,6 +34,17 @@ export function renderAnalyzerPage({
   onSelectPreset,
   onCopyPrompt,
   onCopyGeneratedPrompt,
+  onCopyBackgroundProfile,
+  onCopyPlacementProfile,
+  onCopyFullReport,
+  onCopyMood,
+  onCopyPhotographyStyle,
+  onCopySubjectPlacement,
+  onCopyOutfit,
+  onCopyBackgroundElements,
+  onCopyCompositionSpatial,
+  onEditOptimalPrompt,
+  onRegenerateOptimalPrompt,
   onEnrichPrompt,
   onAddShorthand,
   onRemoveShorthand,
@@ -153,6 +165,97 @@ export function renderAnalyzerPage({
   );
 
   const exclusionsComp = renderExcludedShorthands(exclusions, activeMode);
+
+  // =========================================================================
+  // CASE A-1: MODE ANALISA LATAR BELAKANG / BACKGROUND (MASTER PATCH V3.7)
+  // =========================================================================
+  if (activeMode === 'BACKGROUND_ANALYSIS') {
+    if (!generatedPrompt) {
+      return {
+        html: `
+          <div class="analyzer-stream-container">
+            ${promptInputComp.html}
+          </div>
+        `,
+        bindEvents(container) {
+          promptInputComp.bindEvents(container);
+        }
+      };
+    }
+
+    const backgroundCardComp = renderBackgroundAnalysisCard({
+      analysisResult,
+      onCopyMood,
+      onCopyPhotographyStyle,
+      onCopySubjectPlacement,
+      onCopyOutfit,
+      onCopyBackgroundElements,
+      onCopyCompositionSpatial,
+      onCopyOptimalPrompt: onCopyPrompt || onCopyGeneratedPrompt,
+      onEditOptimalPrompt,
+      onRegenerateOptimalPrompt,
+      onCopyBackgroundProfile,
+      onCopyPlacementProfile,
+      onCopyFullReport,
+      onCopyGeneratedPrompt
+    });
+
+    const bgHtml = `
+      <div class="analyzer-stream-container">
+        <!-- 1. INPUT GAMBAR -->
+        ${promptInputComp.html}
+
+        <!-- 2. HASIL ANALISIS LATAR BELAKANG & PROMPT ANALISA OPTIMAL (MASTER PATCH) -->
+        ${backgroundCardComp.html}
+
+        <!-- 3. EXISTING PROMPT SHORTHAND ANALYZER (Dijalankan langsung berdasarkan Prompt Analisa Optimal) -->
+        <div class="panel" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: var(--radius-sm); padding: 0.65rem 1rem; display: flex; justify-content: space-between; align-items: center; margin-top: 1.25rem; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <svg class="icon-sm" viewBox="0 0 24 24" style="color: #60a5fa;"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+            <strong style="color: #93c5fd; font-size: 0.85rem; letter-spacing: 0.5px;">EXISTING PROMPT SHORTHAND ANALYZER</strong>
+          </div>
+          <span style="font-size: 0.75rem; color: #94a3b8;">Dijalankan langsung berdasarkan Prompt Analisa Optimal &bull; Shorthand Catalog Source of Truth</span>
+        </div>
+
+        <!-- SHORTHAND ANALYSIS (4 Kelompok Shorthand Eksisting) -->
+        <!-- 1. SHORTHAND RELEVAN (Utama & Berhubungan) -->
+        ${recommendationsComp.html}
+
+        <!-- 2. SHORTHAND ALTERNATIF / SERUPA -->
+        ${similarShorthandsComp.html}
+
+        <!-- 3. SHORTHAND KONFLIK -->
+        ${conflictBannerComp.html}
+
+        <!-- 4. SHORTHAND TIDAK DIPERLUKAN -->
+        ${exclusionsComp.html}
+
+        <!-- 4. MAKSUD PROMPT -->
+        ${semanticIntentComp.html}
+
+        <!-- 5. AREA YANG DIUBAH vs AREA YANG DIPERTAHANKAN / LOCKED -->
+        <div class="grid-2">
+          ${editAreasComp.html}
+          ${lockedAreasComp.html}
+        </div>
+
+        <!-- 6. TRANSFORMASI VISUAL FROM -> TO -->
+        ${visualTransformComp.html}
+      </div>
+    `;
+
+    return {
+      html: bgHtml,
+      bindEvents(container) {
+        promptInputComp.bindEvents(container);
+        backgroundCardComp.bindEvents(container);
+        recommendationsComp.bindEvents(container);
+        similarShorthandsComp.bindEvents(container);
+        conflictBannerComp.bindEvents(container);
+        exclusionsComp.bindEvents(container);
+      }
+    };
+  }
 
   // =========================================================================
   // CASE A: MODE 2 & MODE 2 DUNIA - ANALISA GAMBAR -> PROMPT (BLUEPRINT FINAL PIPELINE)

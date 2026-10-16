@@ -3,15 +3,15 @@ plugins {
 }
 
 android {
-    namespace = "com.sevenprojectchannel.promptshorthand.v36"
+    namespace = "com.sevenprojectchannel.promptshorthand.v37"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.sevenprojectchannel.promptshorthand.v36"
+        applicationId = "com.sevenprojectchannel.promptshorthand.v37"
         minSdk = 24
         targetSdk = 34
-        versionCode = 360
-        versionName = "3.6"
+        versionCode = 370
+        versionName = "3.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

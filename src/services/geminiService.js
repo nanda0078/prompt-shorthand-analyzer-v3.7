@@ -22,6 +22,13 @@ import {
   sanitizeTwoWorldsPrompt
 } from '../lib/twoWorldsConflictResolver.js';
 import { detectTwoWorldsSmartParameters } from '../lib/twoWorldsSmartDetector.js';
+import {
+  buildBackgroundAnalysisSystemPrompt,
+  generateDynamicBackgroundAnalysis,
+  formatBackgroundProfileText,
+  formatPlacementProfileText,
+  formatFullBackgroundReportText
+} from '../lib/backgroundAnalyzer.js';
 
 export const GEMINI_STATUS = {
   CONNECTED: 'CONNECTED',     // 🟢 Tersambung
@@ -2014,6 +2021,320 @@ Kembalikan respons HANYA dalam format JSON valid dengan 13 atribut visual lengka
       filename: imageFile?.name,
       targetAspectRatio
     });
+  }
+
+  /**
+   * Helper: Vision Multimodal Analysis khusus Analisa Latar Belakang & Profil Spasial Penempatan Subjek
+   */
+  async executeMultimodalBackgroundImageAnalysis(imageBase64, mimeType, referencePrompt, key, model, preferredLang = 'id', targetAspectRatio = 'auto') {
+    const cleanModel = (model || 'gemini-2.0-flash').trim().replace(/^models\//, '');
+    const candidateModels = [
+      cleanModel,
+      'gemini-2.0-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-1.5-flash',
+      'gemini-2.5-flash',
+      'gemini-1.5-flash-8b'
+    ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('1.5-pro') && !m.includes('2.5-pro') && (m === 'gemini-3.5-flash-lite' || (!m.includes('3.5') && !m.includes('3.8'))));
+
+    if (candidateModels.length === 0) {
+      candidateModels.push('gemini-2.0-flash', 'gemini-1.5-flash');
+    }
+
+    const cleanBase64 = (imageBase64 || '')
+      .replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '')
+      .replace(/\s+/g, '')
+      .trim();
+    if (!cleanBase64 || cleanBase64.length < 50) {
+      throw new Error('Data gambar (base64) tidak valid atau kosong.');
+    }
+
+    let normalizedMime = (mimeType || 'image/jpeg').toLowerCase().trim();
+    if (normalizedMime.includes('png')) normalizedMime = 'image/png';
+    else if (normalizedMime.includes('webp')) normalizedMime = 'image/webp';
+    else if (normalizedMime.includes('heic')) normalizedMime = 'image/heic';
+    else if (normalizedMime.includes('heif')) normalizedMime = 'image/heif';
+    else normalizedMime = 'image/jpeg';
+
+    const systemInstruction = buildBackgroundAnalysisSystemPrompt();
+
+    const promptText = referencePrompt && referencePrompt.trim()
+      ? `Analisis latar belakang foto ini dengan fokus utama pada dekorasi, ruang, arsitektur, dan hubungan spasial penempatan subjek: "${referencePrompt.trim()}". Pisahkan jelas antara Background Profile dan Subject–Background Placement Profile.`
+      : 'Analisis latar belakang foto ini secara mendalam (ruang, arsitektur, dekorasi, properti, material, pencahayaan) serta rekam profil spasial penempatan subjek terhadap latar sebagai acuan.';
+
+    let lastError = null;
+    const attemptErrors = [];
+
+    for (const currentModel of candidateModels) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${encodeURIComponent(key)}`;
+      const configsToTry = [
+        { temperature: 0.1, responseMimeType: 'application/json' },
+        { temperature: 0.1 }
+      ];
+
+      for (const genConfig of configsToTry) {
+        try {
+          const requestBody = {
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { text: `${systemInstruction}\n\nInstruksi: ${promptText}` },
+                  {
+                    inlineData: {
+                      mimeType: normalizedMime,
+                      data: cleanBase64
+                    }
+                  }
+                ]
+              }
+            ],
+            generationConfig: genConfig
+          };
+
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+          });
+
+          if (!response.ok) {
+            const errText = await response.text();
+            if (response.status === 400 && genConfig.responseMimeType) {
+              continue;
+            }
+            throw new Error(`HTTP ${response.status}: ${errText}`);
+          }
+
+          const data = await response.json();
+          const parts = data.candidates?.[0]?.content?.parts || [];
+          let rawText = '';
+          for (const p of parts) {
+            if (p.text && !p.thought) rawText += p.text;
+          }
+          if (!rawText) throw new Error('Respon teks multimodal latar belakang kosong.');
+
+          const parsed = this.extractJson(rawText);
+          if (parsed && (parsed.backgroundProfile || parsed.spaceAndComposition || parsed.placementProfile)) {
+            this.status = GEMINI_STATUS.CONNECTED;
+            this.lastError = null;
+            this.lastSuccessfulModel = currentModel;
+            if (currentModel !== model) {
+              StorageService.setModel(currentModel);
+            }
+            return parsed;
+          }
+        } catch (err) {
+          lastError = err;
+          attemptErrors.push(`${currentModel}: ${err.message}`);
+          console.warn(`Model ${currentModel} multimodal background gagal:`, err.message);
+          break;
+        }
+      }
+    }
+
+    throw lastError || new Error(`Gagal menganalisis latar belakang dengan Gemini API (${attemptErrors.join(' | ')}).`);
+  }
+
+  /**
+   * Mode: Analisa Latar Belakang / Background (V3.7)
+   * Analisis khusus terhadap latar belakang foto (ruang, arsitektur, dekorasi, pencahayaan, material)
+   * dan perekaman profil hubungan spasial penempatan subjek terhadap latar (Profil A & Profil B).
+   */
+  async analyzeBackground({ imageFile = null, imageBase64 = null, mimeType = 'image/jpeg', referencePrompt = '', preferredLang = 'id', visualTelemetry = null, targetAspectRatio = 'auto' }) {
+    const key = StorageService.getApiKey().trim();
+    const model = StorageService.getModel() || 'gemini-2.0-flash';
+
+    let backgroundData = null;
+    let source = 'LOCAL_ENGINE';
+    let isOnlineActive = false;
+    let engineNotice = '';
+
+    // 1. Multimodal AI Vision Analysis jika API Key terhubung dan data base64 tersedia
+    if (key && imageBase64) {
+      try {
+        const aiBgResult = await this.executeMultimodalBackgroundImageAnalysis(imageBase64, mimeType, referencePrompt, key, model, preferredLang, targetAspectRatio);
+        if (aiBgResult && (aiBgResult.backgroundProfile || aiBgResult.spaceAndComposition)) {
+          backgroundData = aiBgResult;
+          source = 'GEMINI_AI';
+          isOnlineActive = true;
+          this.status = GEMINI_STATUS.CONNECTED;
+          this.lastError = null;
+          const activeModel = StorageService.getModel() || model;
+          engineNotice = `🌐 Analisa Latar Belakang AI AKTIF (${activeModel}) — Analisis mendalam latar, dekorasi & hubungan spasial subjek.`;
+        }
+      } catch (err) {
+        console.warn('Gemini multimodal background analysis failed, falling back to dynamic heuristic engine:', err);
+        this.lastError = err.message;
+      }
+    }
+
+    // 2. Fallback Heuristik Dinamis jika offline atau tanpa API Key
+    if (!backgroundData) {
+      backgroundData = generateDynamicBackgroundAnalysis(imageFile, imageBase64, visualTelemetry, targetAspectRatio);
+      source = key ? 'LOCAL_ENGINE_FALLBACK' : 'LOCAL_ENGINE';
+      isOnlineActive = Boolean(key);
+      engineNotice = isOnlineActive
+        ? `🌐 Mode Analisa Latar Belakang (Fallback Heuristik Visual Dinamis: ${this.lastError || 'offline'}).`
+        : `🖥️ Mode Analisa Latar Belakang (Heuristik Visual Dinamis Lokal — Sambungkan Gemini API Key di Pengaturan untuk vision AI langsung).`;
+    }
+
+    if (targetAspectRatio && targetAspectRatio !== 'auto' && targetAspectRatio !== 'Otomatis') {
+      backgroundData.aspectRatio = targetAspectRatio;
+    }
+
+    const bgProfile = backgroundData.backgroundProfile || formatBackgroundProfileText(backgroundData);
+    const placementProfile = backgroundData.placementProfile || formatPlacementProfileText(backgroundData);
+
+    // 3. Prompt Analisa Optimal Latar Belakang (AI English) — Sumber Input untuk Shorthand Analyzer
+    let optimalPrompt = backgroundData.optimalPrompt || '';
+    if (!optimalPrompt || typeof optimalPrompt !== 'string') {
+      const ar = backgroundData.aspectRatio || '16:9';
+      optimalPrompt = `Interior architectural photography of ${backgroundData.spaceAndComposition?.category || 'modern authentic room'}, ${backgroundData.spaceAndComposition?.setting || 'clean spatial setting'}, natural lighting, balanced composition, highly detailed textures, 8k resolution, photorealistic --ar ${ar} --style raw --v 6.1\n\n--no human subject, face, person, portrait, body, distorted architecture, blurry background, bad perspective, watermark, text`;
+    }
+    optimalPrompt = toAiEnglishPrompt(optimalPrompt);
+    backgroundData.optimalPrompt = optimalPrompt;
+
+    const generatedPrompt = optimalPrompt || `${bgProfile}\n\n${placementProfile}`.trim();
+
+    // 4. Shorthand Analysis Blueprint — Dijalankan langsung berdasarkan PROMPT ANALISA OPTIMAL (Master Patch)
+    const {
+      primaryShorthands,
+      relatedShorthands,
+      similarShorthands,
+      conflicts,
+      exclusions
+    } = this.analyzeImageShorthandsBlueprint(optimalPrompt, {
+      mainDescription: optimalPrompt,
+      environment: backgroundData.elemenBackground?.arsitektur || backgroundData.spaceAndComposition?.setting || '',
+      background: backgroundData.elemenBackground?.arsitektur || backgroundData.spaceAndComposition?.architecture || '',
+      lighting: backgroundData.elemenBackground?.lighting || backgroundData.backgroundLighting?.type || '',
+      colorTone: backgroundData.elemenBackground?.warna || backgroundData.colorAndMaterial?.palette || '',
+      aspectRatio: backgroundData.aspectRatio || '16:9',
+      suggestedShorthands: backgroundData.suggestedShorthands || ['/background', '/interior', '/architecture', '/ambientlight']
+    });
+
+    const installedShorthands = primaryShorthands.map(s => s.code);
+
+    // 5. Visual Breakdown: 8 Aspek Latar Belakang
+    const visualBreakdown = {
+      '1. Ruang & Komposisi': `${backgroundData.spaceAndComposition?.category || '-'} (${backgroundData.spaceAndComposition?.setting || '-'})`,
+      '2. Lapisan Visual': `FG: ${backgroundData.visualLayers?.foreground || '-'} | MG: ${backgroundData.visualLayers?.middleGround || '-'} | BG: ${backgroundData.visualLayers?.background || '-'}`,
+      '3. Warna & Material': `${backgroundData.colorAndMaterial?.dominantColor || '-'}, ${backgroundData.colorAndMaterial?.surfaceCharacter || '-'}`,
+      '4. Pencahayaan Latar': `${backgroundData.backgroundLighting?.type || '-'} (${backgroundData.backgroundLighting?.direction || '-'})`,
+      '5. Nuansa Foto / Latar': `${backgroundData.photoMood?.mood || '-'} &bull; ${backgroundData.photoMood?.visualStyle || '-'}`,
+      '6. Elemen Teridentifikasi': Array.isArray(backgroundData.identifiedElements) ? backgroundData.identifiedElements.map(e => e.name).join(', ') : '-',
+      '7. Struktur Komposisi': `${backgroundData.structureAndComposition?.visualBalance || '-'} &bull; ${backgroundData.structureAndComposition?.repetitionPatterns || '-'}`,
+      '8. Hubungan Spasial Subjek': backgroundData.subjectPlacement?.spatialSummary || placementProfile || '-'
+    };
+
+    // 6. Area yang Dikunci (Locked Areas) & Area yang Dioptimalkan (Edit Areas)
+    const lockedAreas = [
+      {
+        entity: 'LATAR_BELAKANG_UTAMA',
+        label: 'Karakteristik & Arsitektur Latar',
+        description: `${backgroundData.spaceAndComposition?.category || 'Latar arsitektural'}: ${backgroundData.spaceAndComposition?.architecture || 'Struktur dinding, lantai, dan plafon asli'}`
+      },
+      {
+        entity: 'DEKORASI_DAN_PROPERTI',
+        label: 'Dekorasi & Properti Lingkungan',
+        description: `${backgroundData.spaceAndComposition?.decoration || 'Dekorasi'} & properti: ${backgroundData.spaceAndComposition?.propsAndAccessories || 'Perabotan dan ornamen penunjang'}`
+      },
+      {
+        entity: 'PENCAHAYAAN_LINGKUNGAN',
+        label: 'Pencahayaan Lingkungan / Latar',
+        description: `${backgroundData.backgroundLighting?.type || 'Pencahayaan alami'}: arah ${backgroundData.backgroundLighting?.direction || 'terarah'} dengan temperatur ${backgroundData.backgroundLighting?.colorTemperature || 'seimbang'}`
+      },
+      {
+        entity: 'ACUAN_SPASIAL_PENEMPATAN',
+        label: 'Hubungan Spasial Penempatan Subjek (Profil B)',
+        description: `Posisi ${backgroundData.subjectPlacement?.horizontalPos || 'tengah'}, skala ${backgroundData.subjectPlacement?.scale || 'medium shot'}, kedalaman ${backgroundData.subjectPlacement?.depthPosition || 'middle ground'} (Acuan untuk penempatan subjek baru)`
+      }
+    ];
+
+    const editAreas = [
+      {
+        entity: 'ISOLASI_IDENTITAS_SUBJEK',
+        label: 'Proteksi Privasi & Isolasi Identitas',
+        description: 'Menghapus analisis identitas fisik/personal subjek (wajah, usia, pakaian, jenis kelamin) dan hanya mempertahankan data spasial murni.'
+      },
+      {
+        entity: 'PRESERVASI_KEDALAMAN_RUANG',
+        label: 'Preservasi Kedalaman Ruang 3D',
+        description: 'Mempertahankan pemisahan foreground, middle ground, dan background agar subjek baru dapat berpadu harmonis.'
+      },
+      {
+        entity: 'PENAJAMAN_TEKSTUR_MATERIAL',
+        label: 'Optimasi Tekstur Material Latar',
+        description: `Mempertegas tekstur mikro ${backgroundData.colorAndMaterial?.materialsAndTextures?.map(m => m.material).join(', ') || 'material latar'} pada prompt optimal.`
+      },
+      {
+        entity: 'PARAMETER_AI_GENERATIF',
+        label: 'Integrasi Parameter AI Generatif',
+        description: `Menyematkan parameter teknis (--ar ${backgroundData.aspectRatio || '16:9'} --style raw --v 6.1) dan negative prompt pencegah artefak subjek.`
+      }
+    ];
+
+    const intent = {
+      primaryAction: 'ANALISA_LATAR_BELAKANG',
+      primaryTarget: 'Karakteristik Latar Belakang & Acuan Spasial Subjek',
+      summary: `Analisis khusus terhadap latar belakang (${backgroundData.spaceAndComposition?.category || 'lingkungan'}) dan hubungan spasial subjek terhadap latar sebagai acuan penempatan pada foto berikutnya.`,
+      priority: 'HIGH',
+      category: 'BACKGROUND'
+    };
+
+    const visualTransformation = {
+      from: `Kondisi visual latar belakang aktual: ${backgroundData.spaceAndComposition?.category || 'Latar foto'} dengan properti dan pencahayaan yang terlihat.`,
+      to: `Profil referensi latar belakang (Profil A) dan acuan penempatan subjek (Profil B) lengkap dengan prompt optimal dan shorthand terkait.`,
+      summary: '💡 Analisis Latar Belakang: Menghasilkan profil lingkungan yang detail dan reusable, sekaligus mengunci hubungan posisi subjek terhadap latar sebagai acuan komposisi.'
+    };
+
+    return {
+      mode: 'BACKGROUND_ANALYSIS',
+      source,
+      isOnlineActive,
+      engineNotice,
+      backgroundData,
+      backgroundProfile: bgProfile,
+      placementProfile,
+      backgroundProfileText: backgroundData.backgroundProfileText || formatBackgroundProfileText(backgroundData),
+      placementProfileText: backgroundData.placementProfileText || formatPlacementProfileText(backgroundData),
+      fullReportText: backgroundData.fullReportText || formatFullBackgroundReportText(backgroundData),
+      aspects: backgroundData.aspects || [
+        { id: 'ruang_komposisi', title: '1. Ruang & Komposisi', content: visualBreakdown['1. Ruang & Komposisi'] },
+        { id: 'lapisan_visual', title: '2. Lapisan Visual & Kedalaman Ruang', content: visualBreakdown['2. Lapisan Visual'] },
+        { id: 'warna_material', title: '3. Warna & Material Latar', content: visualBreakdown['3. Warna & Material'] },
+        { id: 'pencahayaan_latar', title: '4. Pencahayaan Latar & Properti', content: visualBreakdown['4. Pencahayaan Latar'] },
+        { id: 'nuansa_foto', title: '5. Nuansa Foto / Latar', content: visualBreakdown['5. Nuansa Foto / Latar'] },
+        { id: 'elemen_teridentifikasi', title: '6. Elemen Latar Teridentifikasi', content: visualBreakdown['6. Elemen Teridentifikasi'] },
+        { id: 'struktur_komposisi', title: '7. Struktur & Komposisi Latar', content: visualBreakdown['7. Struktur Komposisi'] },
+        { id: 'hubungan_subjek_latar', title: '8. Hubungan Subjek & Latar', content: visualBreakdown['8. Hubungan Spasial Subjek'] }
+      ],
+      generatedPrompt,
+      optimalPrompt,
+      cleanText: generatedPrompt,
+      visualBreakdown,
+      primaryShorthands,
+      relatedShorthands,
+      similarShorthands,
+      recommendations: [...primaryShorthands, ...relatedShorthands, ...similarShorthands],
+      installedShorthands,
+      conflicts,
+      exclusions,
+      editAreas,
+      lockedAreas,
+      unchangedAreas: lockedAreas.map(l => l.description),
+      visualTransformation,
+      intent,
+      referencePrompt: referencePrompt || '',
+      imageInfo: {
+        name: imageFile?.name || 'background-reference.jpg',
+        size: imageFile?.size || 0,
+        type: mimeType,
+        aspectRatio: backgroundData.aspectRatio || '16:9'
+      },
+      timestamp: new Date().toISOString()
+    };
   }
 
 

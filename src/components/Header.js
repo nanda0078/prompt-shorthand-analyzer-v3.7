@@ -29,7 +29,7 @@ export function renderHeader(activeTab, geminiStatusInfo, onTabChange, onOpenSet
           <div class="brand-text">
             <h1>
               PROMPT SHORTHAND ANALYZER
-              <span class="version-tag">V3.6</span>
+              <span class="version-tag">V3.7</span>
             </h1>
             <p>Contextual Shorthand Notation &amp; Semantic Preservation</p>
           </div>
@@ -60,12 +60,12 @@ export function renderHeader(activeTab, geminiStatusInfo, onTabChange, onOpenSet
 
         <div class="header-actions" style="display: flex; align-items: center; gap: 0.5rem;">
           <a 
-            href="./Prompt-Shorthand-Analyzer-v3.5-release.apk" 
-            download="Prompt-Shorthand-Analyzer-v3.5-release.apk" 
+            href="./Prompt-Shorthand-Analyzer-v3.7-release.apk" 
+            download="Prompt-Shorthand-Analyzer-v3.7-release.apk" 
             class="btn btn-primary btn-xs" 
             id="btn-download-apk" 
             style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 700; text-decoration: none; padding: 0.35rem 0.65rem;"
-            title="Download file instalasi aplikasi Android APK V3.5"
+            title="Download file instalasi aplikasi Android APK V3.7"
           >
             📥 <span>Download APK</span>
           </a>

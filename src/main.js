@@ -16,6 +16,7 @@ import { cleanPromptForCopy } from './lib/promptFormatter.js';
 import { DEFAULT_COLOUR_GRADING_CONFIG } from './data/colourGradingData.js';
 import { toAiEnglishPrompt } from './lib/promptEnglishTranslator.js';
 import { detectTwoWorldsSmartParameters } from './lib/twoWorldsSmartDetector.js';
+import { regenerateOptimalBackgroundPrompt } from './lib/backgroundAnalyzer.js';
 
 import { renderHeader } from './components/Header.js';
 import { renderAnalyzerPage } from './components/AnalyzerPage.js';
@@ -143,7 +144,7 @@ class App {
   }
 
   async runAnalysis(promptText, installedOverrides = null) {
-    if (this.activeMode === 'IMAGE_TO_PROMPT' || this.activeMode === 'TWO_WORLDS') {
+    if (this.activeMode === 'IMAGE_TO_PROMPT' || this.activeMode === 'TWO_WORLDS' || this.activeMode === 'BACKGROUND_ANALYSIS') {
       if (!this.uploadedImage) {
         this.showToast('Silakan pilih atau unggah gambar referensi terlebih dahulu.', 'error');
         return;
@@ -168,16 +169,29 @@ class App {
           ? this.selectedAspectRatio
           : (this.uploadedImage.detectedAspectRatio || this.uploadedImage.aspectRatio || 'auto');
 
-        const result = await this.geminiService.analyzeImageToPrompt({
-          imageFile: fileObj,
-          imageBase64: this.uploadedImage.base64,
-          mimeType: this.uploadedImage.type,
-          referencePrompt: promptText,
-          visualTelemetry: this.uploadedImage.visualTelemetry,
-          targetAspectRatio: targetRatio,
-          isTwoWorlds: this.activeMode === 'TWO_WORLDS',
-          twoWorldsConfig: this.activeMode === 'TWO_WORLDS' ? this.twoWorldsConfig : null
-        });
+        let result;
+        if (this.activeMode === 'BACKGROUND_ANALYSIS') {
+          result = await this.geminiService.analyzeBackground({
+            imageFile: fileObj,
+            imageBase64: this.uploadedImage.base64,
+            mimeType: this.uploadedImage.type,
+            referencePrompt: promptText,
+            visualTelemetry: this.uploadedImage.visualTelemetry,
+            targetAspectRatio: targetRatio
+          });
+        } else {
+          result = await this.geminiService.analyzeImageToPrompt({
+            imageFile: fileObj,
+            imageBase64: this.uploadedImage.base64,
+            mimeType: this.uploadedImage.type,
+            referencePrompt: promptText,
+            visualTelemetry: this.uploadedImage.visualTelemetry,
+            targetAspectRatio: targetRatio,
+            isTwoWorlds: this.activeMode === 'TWO_WORLDS',
+            twoWorldsConfig: this.activeMode === 'TWO_WORLDS' ? this.twoWorldsConfig : null
+          });
+        }
+
         result.mode = this.activeMode;
         if (this.activeMode === 'TWO_WORLDS') {
           const smartDetection = result.twoWorldsSmartDetection || (result.visionData?.smartDetection) || detectTwoWorldsSmartParameters(
@@ -213,12 +227,24 @@ class App {
         }
         this.analysisResult = result;
         if (result.source === 'GEMINI_AI') {
-          this.showToast(this.activeMode === 'TWO_WORLDS' ? '✅ Analisa 2 Dunia Vision AI berhasil!' : '✅ Analisa Vision AI berhasil berdasarkan gambar aktual!', 'success');
+          if (this.activeMode === 'BACKGROUND_ANALYSIS') {
+            this.showToast('✅ Analisa Latar Belakang Vision AI berhasil!', 'success');
+          } else if (this.activeMode === 'TWO_WORLDS') {
+            this.showToast('✅ Analisa 2 Dunia Vision AI berhasil!', 'success');
+          } else {
+            this.showToast('✅ Analisa Vision AI berhasil berdasarkan gambar aktual!', 'success');
+          }
         } else if (result.source === 'LOCAL_ENGINE_FALLBACK') {
           const reason = this.geminiService.lastError ? ` (${this.geminiService.lastError})` : '';
           this.showToast(`⚠️ Vision AI terkendala${reason}, menggunakan analisis visual lokal.`, 'warning');
         } else {
-          this.showToast(this.activeMode === 'TWO_WORLDS' ? 'Analisa 2 dunia & pemetaan shorthand berhasil!' : 'Analisa gambar & pemetaan shorthand berhasil!');
+          if (this.activeMode === 'BACKGROUND_ANALYSIS') {
+            this.showToast('Analisa latar belakang & profil spasial berhasil!');
+          } else if (this.activeMode === 'TWO_WORLDS') {
+            this.showToast('Analisa 2 dunia & pemetaan shorthand berhasil!');
+          } else {
+            this.showToast('Analisa gambar & pemetaan shorthand berhasil!');
+          }
         }
       } catch (err) {
         this.showToast(`Gagal menganalisis gambar: ${err.message}`, 'error');
@@ -474,6 +500,17 @@ class App {
         );
         this.analysisResult.generatedPrompt = this.analysisResult.optimalPrompt;
       }
+    } else if (this.analysisResult && this.analysisResult.backgroundData) {
+      this.analysisResult.backgroundData.aspectRatio = effectiveRatio;
+      if (this.analysisResult.imageInfo) {
+        this.analysisResult.imageInfo.aspectRatio = effectiveRatio;
+      }
+      const ar = effectiveRatio;
+      const bgCat = this.analysisResult.backgroundData.spaceAndComposition?.category || 'modern authentic room';
+      const bgSet = this.analysisResult.backgroundData.spaceAndComposition?.setting || 'clean spatial setting';
+      const codes = (this.analysisResult.installedShorthands || []).join(' ');
+      const shorthandsBlock = codes ? `${codes} --ar ${ar} --style raw --v 6.1` : `--ar ${ar} --style raw --v 6.1`;
+      this.analysisResult.optimalPrompt = `Interior architectural photography of ${bgCat}, ${bgSet}, natural lighting, balanced composition, highly detailed textures, 8k resolution, photorealistic ${shorthandsBlock}\n\n--no human subject, face, person, portrait, body, distorted architecture, blurry background, bad perspective, watermark, text`;
     }
 
     if (ratio === 'auto' || ratio === 'Otomatis') {
@@ -489,7 +526,7 @@ class App {
     this.runAnalysis(presetPrompt);
   }
 
-  handleCopyPrompt(promptToCopy) {
+  handleCopyPrompt(promptToCopy, successMsg = '✅ Main Prompt berhasil disalin ke clipboard!') {
     const clean = cleanPromptForCopy(promptToCopy);
     if (!clean) {
       this.showToast('Tidak ada prompt untuk disalin', 'error');
@@ -497,7 +534,7 @@ class App {
     }
 
     navigator.clipboard.writeText(clean).then(() => {
-      this.showToast('✅ Main Prompt berhasil disalin ke clipboard!');
+      this.showToast(successMsg);
     }).catch(() => {
       // Fallback
       const ta = document.createElement('textarea');
@@ -506,8 +543,55 @@ class App {
       ta.select();
       document.execCommand('copy');
       ta.remove();
-      this.showToast('✅ Main Prompt berhasil disalin!');
+      this.showToast(successMsg);
     });
+  }
+
+  handleEditOptimalPrompt(newPrompt) {
+    if (!newPrompt || !newPrompt.trim()) {
+      this.showToast('Prompt tidak boleh kosong.', 'warning');
+      return;
+    }
+    const cleanPrompt = newPrompt.trim();
+    if (!this.analysisResult) {
+      this.analysisResult = {};
+    }
+    this.analysisResult.optimalPrompt = cleanPrompt;
+    this.analysisResult.generatedPrompt = cleanPrompt;
+    if (this.analysisResult.backgroundData) {
+      this.analysisResult.backgroundData.optimalPrompt = cleanPrompt;
+    }
+
+    // Re-run Shorthand Analyzer existing berdasarkan Prompt Analisa Optimal (Master Patch)
+    const blueprint = this.geminiService.analyzeImageShorthandsBlueprint(cleanPrompt, {
+      aspectRatio: this.analysisResult.backgroundData?.aspectRatio || this.selectedAspectRatio || '16:9',
+      environment: this.analysisResult.backgroundData?.elemenBackground?.arsitektur || '',
+      background: this.analysisResult.backgroundData?.elemenBackground?.arsitektur || '',
+      lighting: this.analysisResult.backgroundData?.elemenBackground?.lighting || '',
+      colorTone: this.analysisResult.backgroundData?.elemenBackground?.warna || ''
+    });
+
+    this.analysisResult.primaryShorthands = blueprint.primaryShorthands;
+    this.analysisResult.relatedShorthands = blueprint.relatedShorthands;
+    this.analysisResult.similarShorthands = blueprint.similarShorthands;
+    this.analysisResult.recommendations = [...blueprint.primaryShorthands, ...blueprint.relatedShorthands, ...blueprint.similarShorthands];
+    this.analysisResult.installedShorthands = blueprint.primaryShorthands.map(s => s.code);
+    this.analysisResult.conflicts = blueprint.conflicts;
+    this.analysisResult.exclusions = blueprint.exclusions;
+
+    this.showToast('✅ Prompt Analisa Optimal diperbarui & Shorthand diselaraskan!');
+    this.render();
+  }
+
+  handleRegenerateOptimalPrompt() {
+    if (!this.analysisResult || !this.analysisResult.backgroundData) {
+      this.showToast('Data analisa latar belakang belum tersedia.', 'warning');
+      return;
+    }
+    this.bgPromptVariant = ((this.bgPromptVariant || 0) + 1) % 3;
+    const newPrompt = regenerateOptimalBackgroundPrompt(this.analysisResult.backgroundData, this.bgPromptVariant);
+    this.handleEditOptimalPrompt(newPrompt);
+    this.showToast(`🔄 Prompt Analisa Optimal baru berhasil digenerate (Variasi ${this.bgPromptVariant + 1})!`);
   }
 
   async handleEnrichPrompt() {
@@ -598,7 +682,15 @@ class App {
   updateInstalledShorthands(newInstalledList) {
     this.analysisResult.installedShorthands = newInstalledList;
     // Reconstruct optimal prompt (100% AI-Readable English across all modes)
-    if ((this.analysisResult.mode === 'IMAGE_TO_PROMPT' || this.analysisResult.mode === 'TWO_WORLDS') && this.analysisResult.visionData) {
+    if (this.analysisResult.mode === 'BACKGROUND_ANALYSIS' && this.analysisResult.backgroundData) {
+      const ar = this.analysisResult.backgroundData.aspectRatio || '16:9';
+      const bgCat = this.analysisResult.backgroundData.spaceAndComposition?.category || 'modern authentic room';
+      const bgSet = this.analysisResult.backgroundData.spaceAndComposition?.setting || 'clean spatial setting';
+      const shorthandsBlock = newInstalledList.length > 0
+        ? `${newInstalledList.join(' ')} --ar ${ar} --style raw --v 6.1`
+        : `--ar ${ar} --style raw --v 6.1`;
+      this.analysisResult.optimalPrompt = `Interior architectural photography of ${bgCat}, ${bgSet}, natural lighting, balanced composition, highly detailed textures, 8k resolution, photorealistic ${shorthandsBlock}\n\n--no human subject, face, person, portrait, body, distorted architecture, blurry background, bad perspective, watermark, text`;
+    } else if ((this.analysisResult.mode === 'IMAGE_TO_PROMPT' || this.analysisResult.mode === 'TWO_WORLDS') && this.analysisResult.visionData) {
       this.analysisResult.optimalPrompt = this.geminiService.assembleOptimalImagePrompt(
         this.analysisResult.visionData,
         newInstalledList,
@@ -953,7 +1045,7 @@ class App {
           }
           this.analysisResult = this.geminiService.localEngine.getEmptyResult();
           this.render();
-          if (this.activeMode === 'IMAGE_TO_PROMPT' || this.activeMode === 'TWO_WORLDS') {
+          if (this.activeMode === 'IMAGE_TO_PROMPT' || this.activeMode === 'TWO_WORLDS' || this.activeMode === 'BACKGROUND_ANALYSIS') {
             this.runAnalysis(this.currentPrompt);
           }
         },
@@ -970,6 +1062,17 @@ class App {
         onSelectPreset: (text) => this.handleSelectPreset(text),
         onCopyPrompt: (prompt) => this.handleCopyPrompt(prompt),
         onCopyGeneratedPrompt: (text) => this.handleCopyPrompt(text),
+        onCopyBackgroundProfile: (text) => this.handleCopyPrompt(text),
+        onCopyPlacementProfile: (text) => this.handleCopyPrompt(text),
+        onCopyFullReport: (text) => this.handleCopyPrompt(text),
+        onCopyMood: (text) => this.handleCopyPrompt(text, '✅ Ringkasan Suasana / Mood berhasil disalin!'),
+        onCopyPhotographyStyle: (text) => this.handleCopyPrompt(text, '✅ Ringkasan Gaya Fotografi berhasil disalin!'),
+        onCopySubjectPlacement: (text) => this.handleCopyPrompt(text, '✅ Ringkasan Hubungan Subjek & Latar berhasil disalin!'),
+        onCopyOutfit: (text) => this.handleCopyPrompt(text, '✅ Ringkasan Referensi Outfit Subjek berhasil disalin!'),
+        onCopyBackgroundElements: (text) => this.handleCopyPrompt(text, '✅ Ringkasan Elemen Background berhasil disalin!'),
+        onCopyCompositionSpatial: (text) => this.handleCopyPrompt(text, '✅ Ringkasan Komposisi & Spatial Relationship berhasil disalin!'),
+        onEditOptimalPrompt: (newPrompt) => this.handleEditOptimalPrompt(newPrompt),
+        onRegenerateOptimalPrompt: () => this.handleRegenerateOptimalPrompt(),
         onEnrichPrompt: () => this.handleEnrichPrompt(),
         onAddShorthand: (code) => this.handleAddShorthand(code),
         onRemoveShorthand: (code) => this.handleRemoveShorthand(code),

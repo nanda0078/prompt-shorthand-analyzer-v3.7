@@ -55,6 +55,21 @@ import {
   analyzeImageColorTelemetry
 } from '../src/lib/colourGradingEngine.js';
 import { renderColourGradingPanel } from '../src/components/ColourGradingPanel.js';
+import {
+  buildBackgroundAnalysisSystemPrompt,
+  formatBackgroundProfileText,
+  formatPlacementProfileText,
+  formatFullBackgroundReportText,
+  formatMoodText,
+  formatPhotographyStyleText,
+  formatSubjectBackgroundRelationshipText,
+  formatOutfitReferenceText,
+  formatBackgroundElementsText,
+  formatCompositionSpatialText,
+  regenerateOptimalBackgroundPrompt,
+  generateDynamicBackgroundAnalysis
+} from '../src/lib/backgroundAnalyzer.js';
+import { renderBackgroundAnalysisCard } from '../src/components/BackgroundAnalysisCard.js';
 
 const engine = new SemanticEngine(INITIAL_SHORTHAND_CATALOG);
 
@@ -2935,6 +2950,466 @@ const nonTwoWorldsInput = renderPromptInput({
   twoWorldsConfig: null
 });
 assert(!nonTwoWorldsInput.html.includes('two-worlds-config-panel'), 'Tab Analisa Gambar -> Prompt TIDAK me-render panel 2 Dunia');
+
+// -----------------------------------------------------------------------------
+// VERIFIKASI V3.7: TAB ANALISA LATAR BELAKANG / BACKGROUND (PATCH ONLY)
+// -----------------------------------------------------------------------------
+console.log('\n--- VERIFIKASI V3.7: TAB ANALISA LATAR BELAKANG / BACKGROUND ---');
+
+// 1. Verifikasi Tab Selector di PromptInput
+{
+  const bgInput = renderPromptInput({
+    activeMode: 'BACKGROUND_ANALYSIS'
+  });
+  assert(bgInput.html.includes('data-mode="BACKGROUND_ANALYSIS"'), 'PromptInput: Tab selector memuat data-mode="BACKGROUND_ANALYSIS"');
+  assert(bgInput.html.includes('data-mode="BACKGROUND_ANALYSIS"') && bgInput.html.includes('mode-tab-btn active'), 'PromptInput: Tab Analisa Latar Belakang memiliki class active');
+  assert(bgInput.html.includes('Analisa Latar Belakang') && bgInput.html.includes('btn-primary'), 'PromptInput: Tombol eksekusi menampilkan label "Analisa Latar Belakang"');
+  assert(bgInput.html.includes('dropzone'), 'PromptInput: Menampilkan upload dropzone');
+  assert(bgInput.html.includes('aspect-ratio-control-panel'), 'PromptInput: Menampilkan selector aspect ratio');
+  assert(!bgInput.html.includes('two-worlds-config-panel'), 'PromptInput: Tidak me-render panel 2 Dunia pada mode latar belakang');
+  assert(!bgInput.html.includes('colour-grading-config-panel'), 'PromptInput: Tidak me-render panel colour grading pada mode latar belakang');
+
+  // Verifikasi 6 Tab Lengkap Tanpa Kehilangan Tab Eksisting
+  const tabModes = ['ANALISA_PROMPT', 'IMAGE_TO_PROMPT', 'TWO_WORLDS', 'SHORTHAND_IMPROVE', 'COLOUR_GRADING', 'BACKGROUND_ANALYSIS'];
+  for (const tm of tabModes) {
+    assert(bgInput.html.includes(`data-mode="${tm}"`), `PromptInput: Preservasi Tab eksisting memuat data-mode="${tm}"`);
+  }
+}
+
+// 2. Verifikasi System Prompt Multimodal Gemini untuk Analisis Latar Belakang
+{
+  const sysPrompt = buildBackgroundAnalysisSystemPrompt();
+  assert(typeof sysPrompt === 'string' && sysPrompt.length > 500, 'System Prompt: Prompt sistem latar belakang terdefinisi dan komprehensif');
+
+  // Aturan Isolasi Subjek (Wajib dipatuhi)
+  assert(sysPrompt.includes('LATAR BELAKANG') || sysPrompt.includes('BACKGROUND'), 'System Prompt: Menekankan fokus utama pada LATAR BELAKANG');
+  assert(sysPrompt.includes('DILARANG MENGANALISIS IDENTITAS PERSONAL') || sysPrompt.includes('personal identity'), 'System Prompt: Melarang analisis identitas subjek');
+  assert(sysPrompt.includes('wajah') && sysPrompt.includes('warna kulit') && sysPrompt.includes('usia') && sysPrompt.includes('pakaian'), 'System Prompt: Secara eksplisit menyebut larangan wajah, warna kulit, usia, pakaian');
+
+  // Kewajiban Hubungan Spasial (Subject-Background Placement Profile)
+  assert(sysPrompt.includes('SUBJECT–BACKGROUND PLACEMENT PROFILE') || sysPrompt.includes('placementProfile'), 'System Prompt: Mewajibkan SUBJECT–BACKGROUND PLACEMENT PROFILE');
+  assert(sysPrompt.includes('BACKGROUND PROFILE') || sysPrompt.includes('backgroundProfile'), 'System Prompt: Mewajibkan BACKGROUND PROFILE');
+
+  // 8 Aspek Wajib
+  const requiredAspects = [
+    'Ruang & Komposisi',
+    'Lapisan Visual',
+    'Warna & Material',
+    'Pencahayaan Latar',
+    'Nuansa Foto',
+    'Elemen Latar Teridentifikasi',
+    'Struktur & Komposisi Latar',
+    'Hubungan Subjek & Latar'
+  ];
+  for (const asp of requiredAspects) {
+    assert(sysPrompt.includes(asp), `System Prompt: Mewajibkan aspek "${asp}"`);
+  }
+}
+
+// 3. Verifikasi Engine Dinamis & Heuristik Latar Belakang
+{
+  const mockImage = {
+    name: 'interior_executive_suite.jpg',
+    size: 520000,
+    width: 1920,
+    height: 1080
+  };
+  const mockTelemetry = {
+    dominantHue: 'warm-amber',
+    dominantColorIndonesian: 'cokelat kayu oak & amber hangat',
+    dominantColorEnglish: 'warm oak amber and soft cream',
+    secondaryColorIndonesian: 'krem lembut / off-white bertekstur',
+    lightingStyleIndonesian: 'pencahayaan hangat ambient interior dengan lampu aksen',
+    dimensions: { width: 1920, height: 1080, aspectRatio: '16:9', orientation: 'landscape-wide' }
+  };
+
+  const bgResult = generateDynamicBackgroundAnalysis({
+    imageFile: mockImage,
+    visualTelemetry: mockTelemetry,
+    aspectRatio: '16:9'
+  });
+
+  assert(bgResult.mode === 'BACKGROUND_ANALYSIS', 'Engine: Mode hasil adalah BACKGROUND_ANALYSIS');
+  assert(Boolean(bgResult.backgroundProfile), 'Engine: Menghasilkan string backgroundProfile (Profil A)');
+  assert(Boolean(bgResult.placementProfile), 'Engine: Menghasilkan string placementProfile (Profil B)');
+
+  // Verifikasi Struktur 8 Kategori Internal
+  assert(Boolean(bgResult.spaceAndComposition), 'Profil A: Memiliki spaceAndComposition');
+  assert(Boolean(bgResult.visualLayers), 'Profil A: Memiliki visualLayers');
+  assert(Boolean(bgResult.colorAndMaterial), 'Profil A: Memiliki colorAndMaterial');
+  assert(Boolean(bgResult.backgroundLighting), 'Profil A: Memiliki backgroundLighting');
+  assert(Boolean(bgResult.photoMood), 'Profil A: Memiliki photoMood');
+  assert(Array.isArray(bgResult.identifiedElements) && bgResult.identifiedElements.length > 0, 'Profil A: Memiliki array identifiedElements');
+  assert(Boolean(bgResult.structureAndComposition), 'Profil A: Memiliki structureComposition');
+
+  // Verifikasi Struktur Profil B
+  assert(Boolean(bgResult.subjectPlacement), 'Profil B: Memiliki subjectPlacement');
+  assert(Boolean(bgResult.subjectPlacement.horizontalPos), 'Profil B: Memiliki horizontalPos');
+  assert(Boolean(bgResult.subjectPlacement.verticalPos), 'Profil B: Memiliki verticalPos');
+  assert(Boolean(bgResult.subjectPlacement.scale), 'Profil B: Memiliki scale');
+  assert(Boolean(bgResult.subjectPlacement.orientation), 'Profil B: Memiliki orientation');
+  assert(Boolean(bgResult.subjectPlacement.depthPosition), 'Profil B: Memiliki depthPosition');
+  assert(Boolean(bgResult.subjectPlacement.spatialSummary), 'Profil B: Memiliki spatialSummary');
+
+  // Verifikasi 8 Aspek Lengkap
+  assert(Array.isArray(bgResult.aspects) && bgResult.aspects.length === 8, `Engine: Memiliki tepat 8 aspek terstruktur (ditemukan: ${bgResult.aspects.length})`);
+  const aspectTitles = bgResult.aspects.map(a => a.title);
+  assert(aspectTitles.some(t => t.includes('Ruang & Komposisi')), 'Aspek 1: Ruang & Komposisi hadir');
+  assert(aspectTitles.some(t => t.includes('Lapisan Visual')), 'Aspek 2: Lapisan Visual hadir');
+  assert(aspectTitles.some(t => t.includes('Warna & Material')), 'Aspek 3: Warna & Material hadir');
+  assert(aspectTitles.some(t => t.includes('Pencahayaan Latar')), 'Aspek 4: Pencahayaan Latar hadir');
+  assert(aspectTitles.some(t => t.includes('Nuansa Foto')), 'Aspek 5: Nuansa Foto / Latar hadir');
+  assert(aspectTitles.some(t => t.includes('Elemen Latar Teridentifikasi')), 'Aspek 6: Elemen Latar Teridentifikasi hadir');
+  assert(aspectTitles.some(t => t.includes('Struktur & Komposisi Latar')), 'Aspek 7: Struktur & Komposisi Latar hadir');
+  assert(aspectTitles.some(t => t.includes('Hubungan Subjek & Latar')), 'Aspek 8: Hubungan Subjek & Latar hadir');
+
+  // Verifikasi String Output & Teks Profil Terpisah
+  assert(typeof bgResult.backgroundProfileText === 'string' && bgResult.backgroundProfileText.includes('BACKGROUND PROFILE'), 'Engine: backgroundProfileText berisi header Profil A');
+  assert(typeof bgResult.placementProfileText === 'string' && bgResult.placementProfileText.includes('SUBJECT–BACKGROUND PLACEMENT PROFILE'), 'Engine: placementProfileText berisi header Profil B');
+  assert(bgResult.optimalPrompt.includes('--ar 16:9'), 'Engine: optimalPrompt memuat aspek rasio --ar 16:9');
+  assert(bgResult.optimalPrompt.includes('--no human subject'), 'Engine: optimalPrompt menyertakan negative prompt isolasi subjek manusia');
+  assert(Array.isArray(bgResult.suggestedShorthands) && bgResult.suggestedShorthands.length > 0, 'Engine: suggestedShorthands relevan terpasang');
+
+  // Verifikasi Keamanan Isolasi Identitas Personal: Profil A tidak boleh membicarakan wajah atau usia subjek
+  assert(!bgResult.backgroundProfileText.toLowerCase().includes('wajah subjek'), 'Isolasi Identitas: Profil A bebas deskripsi wajah subjek');
+  assert(!bgResult.backgroundProfileText.toLowerCase().includes('usia subjek'), 'Isolasi Identitas: Profil A bebas deskripsi usia subjek');
+  assert(!bgResult.backgroundProfileText.toLowerCase().includes('warna kulit'), 'Isolasi Identitas: Profil A bebas deskripsi warna kulit subjek');
+}
+
+// 4. Verifikasi Formatter Fungsi Teks
+{
+  const dummyBgData = {
+    backgroundProfile: 'Studio modern bernuansa arsitektur minimalis dengan pencahayaan lembut.',
+    placementProfile: 'Subjek berada di tengah frame pada kedalaman middle ground.',
+    spaceAndComposition: {
+      category: 'Studio Interior Modern',
+      setting: 'Setting kantor kontemporer',
+      architecture: 'Dinding panel vertikal',
+      decoration: 'Tanaman hias pot',
+      propsAndAccessories: 'Meja kerja kayu matte'
+    },
+    visualLayers: {
+      foreground: 'Lantai parket',
+      middleGround: 'Area kerja subjek',
+      background: 'Dinding aksen',
+      perspective: 'Eye-level linear',
+      depthOfField: 'Medium depth of field'
+    },
+    colorAndMaterial: {
+      palette: 'Walnut & krem',
+      dominantColor: 'Cokelat kayu',
+      accentColor: 'Kuning kuningan',
+      surfaceCharacter: 'Matte halus',
+      materialsAndTextures: [{ material: 'Kayu Walnut', texture: 'Serat halus' }]
+    },
+    backgroundLighting: {
+      type: 'Soft diffused',
+      direction: 'Kiri atas 45 derajat',
+      quality: 'Lembut',
+      intensity: 'Seimbang',
+      colorTemperature: '4000K',
+      shadows: 'Bayangan lembut',
+      highlights: 'Highlight satin',
+      contrast: 'Moderat',
+      distribution: 'Merata'
+    },
+    photoMood: {
+      mood: 'Profesional & tenang',
+      visualStyle: 'Modern Architectural',
+      backgroundCharacter: 'Kohesif & bersih',
+      roomImpression: 'Lapang',
+      formalityLevel: 'Semi-formal'
+    },
+    structureAndComposition: {
+      symmetry: 'Asimetris seimbang',
+      visualBalance: 'Proporsional',
+      repetitionPatterns: 'Kisi vertikal',
+      leadingLines: 'Garis meja',
+      focalPoint: 'Tengah latar',
+      negativeSpace: 'Lapang',
+      spaceDepth: '3 dimensi nyata'
+    },
+    subjectPlacement: {
+      horizontalPos: 'Tengah frame',
+      verticalPos: 'Tengah vertikal',
+      orientation: 'Frontal',
+      scale: 'Medium shot',
+      frameProportion: '30%',
+      distanceFromBg: '1.5 meter',
+      depthPosition: 'Middle ground',
+      spatialSummary: 'Subjek berada di tengah frame pada kedalaman middle ground dengan rak buku di belakangnya.'
+    },
+    identifiedElements: [
+      { name: 'Rak Dinding', type: 'Struktur', relativePosition: 'Background tengah', relativeSize: 'Besar', visualFunction: 'Anchor estetika' },
+      { name: 'Lampu Meja', type: 'Pencahayaan', relativePosition: 'Foreground kiri', relativeSize: 'Sedang', visualFunction: 'Pencahayaan aksen' }
+    ],
+    optimalPrompt: 'Modern minimalist studio interior with wooden paneling --ar 16:9'
+  };
+
+  const textA = formatBackgroundProfileText(dummyBgData);
+  assert(textA.includes('=== BACKGROUND PROFILE (PROFIL LATAR BELAKANG) ==='), 'formatBackgroundProfileText: Memuat judul Profil A');
+  assert(textA.includes('Studio Interior Modern'), 'formatBackgroundProfileText: Memuat kategori ruang');
+  assert(textA.includes('Kayu Walnut'), 'formatBackgroundProfileText: Memuat rincian material');
+
+  const textB = formatPlacementProfileText(dummyBgData);
+  assert(textB.includes('=== SUBJECT–BACKGROUND PLACEMENT PROFILE (ACUAN PENEMPATAN SUBJEK) ==='), 'formatPlacementProfileText: Memuat judul Profil B');
+  assert(textB.includes('Tengah frame'), 'formatPlacementProfileText: Memuat posisi horizontal');
+  assert(textB.includes('Medium shot'), 'formatPlacementProfileText: Memuat skala subjek');
+
+  const fullReport = formatFullBackgroundReportText(dummyBgData);
+  assert(fullReport.includes('=== BACKGROUND PROFILE (PROFIL LATAR BELAKANG) ==='), 'formatFullBackgroundReportText: Memuat Profil A');
+  assert(fullReport.includes('=== SUBJECT–BACKGROUND PLACEMENT PROFILE (ACUAN PENEMPATAN SUBJEK) ==='), 'formatFullBackgroundReportText: Memuat Profil B');
+  assert(fullReport.includes('=== DAFTAR ELEMEN LATAR TERIDENTIFIKASI ==='), 'formatFullBackgroundReportText: Memuat daftar elemen teridentifikasi');
+  assert(fullReport.includes('=== PROMPT OPTIMAL LATAR BELAKANG (AI ENGLISH) ==='), 'formatFullBackgroundReportText: Memuat prompt optimal AI');
+}
+
+// 5. Verifikasi Komponen UI: renderBackgroundAnalysisCard
+{
+  const sampleData = generateDynamicBackgroundAnalysis({
+    imageFile: { name: 'test_sample.png', size: 120000, width: 800, height: 600 },
+    aspectRatio: '4:3'
+  });
+
+  const cardComp = renderBackgroundAnalysisCard({ analysisResult: sampleData });
+  assert(cardComp.html.includes('id="card-background-analysis"'), 'renderBackgroundAnalysisCard: Elemen card utama #card-background-analysis ada');
+  assert(cardComp.html.includes('id="btn-copy-bg-profile"'), 'renderBackgroundAnalysisCard: Tombol salin Profil A ada');
+  assert(cardComp.html.includes('id="btn-copy-placement-profile"'), 'renderBackgroundAnalysisCard: Tombol salin Profil B ada');
+  assert(cardComp.html.includes('id="btn-copy-full-bg-report"'), 'renderBackgroundAnalysisCard: Tombol salin laporan komprehensif ada');
+  assert(cardComp.html.includes('PROFIL A: BACKGROUND PROFILE (PROFIL LATAR BELAKANG)'), 'renderBackgroundAnalysisCard: Menampilkan Card Profil A');
+  assert(cardComp.html.includes('PROFIL B: SUBJECT–BACKGROUND PLACEMENT PROFILE'), 'renderBackgroundAnalysisCard: Menampilkan Card Profil B');
+  assert(cardComp.html.includes('Rincian 8 Aspek Analisis Latar Belakang'), 'renderBackgroundAnalysisCard: Menampilkan Grid 8 Aspek');
+  assert(cardComp.html.includes('HUBUNGAN SUBJEK &amp; LATAR'), 'renderBackgroundAnalysisCard: Menampilkan Aspek 8 Hubungan Subjek & Latar');
+}
+
+// 6. Verifikasi Service: GeminiService.analyzeBackground
+{
+  const geminiSvc = new GeminiService(INITIAL_SHORTHAND_CATALOG);
+  const serviceRes = await geminiSvc.analyzeBackground({
+    imageFile: { name: 'outdoor_patio.jpg', size: 210000, width: 1200, height: 900 },
+    targetAspectRatio: '4:3'
+  });
+
+  assert(serviceRes.mode === 'BACKGROUND_ANALYSIS', 'GeminiService: analyzeBackground mengembalikan mode BACKGROUND_ANALYSIS');
+  assert(Boolean(serviceRes.backgroundProfile), 'GeminiService: analyzeBackground menghasilkan backgroundProfile');
+  assert(Boolean(serviceRes.placementProfile), 'GeminiService: analyzeBackground menghasilkan placementProfile');
+  assert(Array.isArray(serviceRes.aspects) && serviceRes.aspects.length === 8, 'GeminiService: analyzeBackground mengembalikan 8 aspek terstruktur');
+  assert(typeof serviceRes.backgroundProfileText === 'string', 'GeminiService: analyzeBackground menyertakan backgroundProfileText');
+  assert(typeof serviceRes.placementProfileText === 'string', 'GeminiService: analyzeBackground menyertakan placementProfileText');
+  assert(serviceRes.optimalPrompt.includes('--ar 4:3'), 'GeminiService: analyzeBackground menerapkan target aspect ratio 4:3');
+  assert(Array.isArray(serviceRes.installedShorthands), 'GeminiService: analyzeBackground menghasilkan array installedShorthands');
+}
+
+// 7. Verifikasi AnalyzerPage dengan mode BACKGROUND_ANALYSIS
+{
+  const geminiSvc = new GeminiService(INITIAL_SHORTHAND_CATALOG);
+  const mockResult = await geminiSvc.analyzeBackground({
+    imageFile: { name: 'art_gallery.jpg', size: 300000, width: 1920, height: 1080 },
+    targetAspectRatio: '16:9'
+  });
+
+  const pageWithResult = renderAnalyzerPage({
+    analysisResult: mockResult,
+    activeMode: 'BACKGROUND_ANALYSIS',
+    shorthandCatalog: INITIAL_SHORTHAND_CATALOG
+  });
+  assert(pageWithResult.html.includes('id="card-background-analysis"'), 'AnalyzerPage: Me-render BackgroundAnalysisCard saat ada hasil analisis');
+
+  const pageEmpty = renderAnalyzerPage({
+    analysisResult: null,
+    activeMode: 'BACKGROUND_ANALYSIS',
+    shorthandCatalog: INITIAL_SHORTHAND_CATALOG
+  });
+  assert(pageEmpty.html.includes('dropzone'), 'AnalyzerPage: Me-render dropzone saat data analisis belum ada');
+  assert(!pageEmpty.html.includes('id="card-background-analysis"'), 'AnalyzerPage: Tidak me-render kartu hasil saat data analisis belum ada');
+}
+
+// ============================================================
+// VERIFIKASI MASTER PATCH: BACKGROUND ANALYZER AI + PROMPT ANALISA OPTIMAL + SHORTHAND EXISTING
+// ============================================================
+console.log('\n--- VERIFIKASI MASTER PATCH: BACKGROUND ANALYZER AI + PROMPT ANALISA OPTIMAL + SHORTHAND EXISTING ---');
+
+{
+  const mockImage = {
+    name: 'executive_study_room.jpg',
+    size: 450000,
+    width: 1920,
+    height: 1080
+  };
+  const mockTelemetry = {
+    dominantHue: 'warm-amber',
+    dominantColorIndonesian: 'kayu cokelat walnut & amber',
+    dominantColorEnglish: 'warm walnut wood and amber',
+    secondaryColorIndonesian: 'krem lembut',
+    lightingStyleIndonesian: 'pencahayaan ambient hangat',
+    dimensions: { width: 1920, height: 1080, aspectRatio: '16:9', orientation: 'landscape-wide' }
+  };
+
+  const bgResult = generateDynamicBackgroundAnalysis({
+    imageFile: mockImage,
+    visualTelemetry: mockTelemetry,
+    aspectRatio: '16:9'
+  });
+
+  // 1. Verifikasi 6 Bidang Hasil Analisa Master Patch
+  assert(Boolean(bgResult.suasanaMood), 'Master Patch: Memuat objek 1. Suasana / Mood');
+  assert(Boolean(bgResult.gayaFotografi), 'Master Patch: Memuat objek 2. Gaya Fotografi');
+  assert(Boolean(bgResult.hubunganSubjekLatar), 'Master Patch: Memuat objek 3. Hubungan Subjek & Latar');
+  assert(Boolean(bgResult.referensiOutfitSubjek), 'Master Patch: Memuat objek 4. Referensi Outfit Subjek');
+  assert(Boolean(bgResult.elemenBackground), 'Master Patch: Memuat objek 5. Elemen Background');
+  assert(Boolean(bgResult.komposisiSpatial), 'Master Patch: Memuat objek 6. Komposisi & Spatial Relationship');
+
+  // 2. Verifikasi Formatter Khusus Masing-Masing Bidang (untuk Tombol COPY Bersih)
+  const moodText = formatMoodText(bgResult);
+  assert(moodText.includes('SUASANA / MOOD:') && moodText.includes('Atmosphere:') && moodText.includes('Mood:'), 'Formatter 1: formatMoodText memuat header dan parameter mood');
+
+  const photoText = formatPhotographyStyleText(bgResult);
+  assert(photoText.includes('GAYA FOTOGRAFI:') && photoText.includes('Photography Style:') && photoText.includes('Genre:'), 'Formatter 2: formatPhotographyStyleText memuat header dan parameter gaya');
+
+  const relText = formatSubjectBackgroundRelationshipText(bgResult);
+  assert(relText.includes('HUBUNGAN SUBJEK & LATAR (SPATIAL):') && relText.includes('Posisi Subjek dalam Frame:'), 'Formatter 3: formatSubjectBackgroundRelationshipText memuat relasi spasial subjek');
+
+  const outfitText = formatOutfitReferenceText(bgResult);
+  assert(outfitText.includes('REFERENSI OUTFIT SUBJEK:') && outfitText.includes('Jenis Pakaian:') && outfitText.includes('Harmonisasi dengan Latar:'), 'Formatter 4: formatOutfitReferenceText memuat referensi busana');
+
+  const elemText = formatBackgroundElementsText(bgResult);
+  assert(elemText.includes('ELEMEN BACKGROUND:') && elemText.includes('Arsitektur / Struktur:') && elemText.includes('Furniture:') && elemText.includes('Dekorasi:'), 'Formatter 5: formatBackgroundElementsText memuat 6 komponen elemen latar');
+
+  const spatialText = formatCompositionSpatialText(bgResult);
+  assert(spatialText.includes('KOMPOSISI & SPATIAL RELATIONSHIP:') && spatialText.includes('Penempatan Subjek:') && spatialText.includes('Negative Space:'), 'Formatter 6: formatCompositionSpatialText memuat komposisi ruang');
+
+  // 3. Verifikasi Aturan Privasi Subjek & Isolasi Outfit dari Prompt Background Final
+  assert(!outfitText.toLowerCase().includes('wajah'), 'Aturan Privasi: Referensi Outfit bebas deskripsi wajah');
+  assert(!outfitText.toLowerCase().includes('warna kulit'), 'Aturan Privasi: Referensi Outfit bebas warna kulit');
+  assert(!bgResult.optimalPrompt.toLowerCase().includes('blazer'), 'Isolasi Prompt: Prompt Optimal TIDAK memuat deskripsi outfit subjek');
+  assert(!bgResult.optimalPrompt.toLowerCase().includes('pakaian'), 'Isolasi Prompt: Prompt Optimal TIDAK memuat kata pakaian');
+
+  // 4. Verifikasi Standar Prompt Analisa Optimal
+  assert(bgResult.optimalPrompt.includes('Background only, no people, no face, no human identity, no text, no watermark.'), 'Prompt Optimal: Ditutup kalimat default penegasan tanpa orang/identitas');
+  assert(bgResult.optimalPrompt.includes('--ar 16:9') && bgResult.optimalPrompt.includes('--style raw') && bgResult.optimalPrompt.includes('--v 6.1'), 'Prompt Optimal: Memuat flag Midjourney standar (--ar, --style raw, --v 6.1)');
+  assert(!bgResult.optimalPrompt.includes('{') && !bgResult.optimalPrompt.includes('['), 'Prompt Optimal: Bukan JSON/tabel melainkan satu paragraf alami');
+
+  // 5. Verifikasi Regenerasi Prompt Dinamis (3 Varian)
+  const var0 = regenerateOptimalBackgroundPrompt(bgResult, 0);
+  const var1 = regenerateOptimalBackgroundPrompt(bgResult, 1);
+  const var2 = regenerateOptimalBackgroundPrompt(bgResult, 2);
+  assert(Boolean(var0) && Boolean(var1) && Boolean(var2), 'Regenerasi Prompt: Menghasilkan 3 variasi prompt valid');
+  assert(var0 !== var1 && var1 !== var2, 'Regenerasi Prompt: Masing-masing varian memiliki framing dan artikulasi berbeda');
+  assert(var0.includes('Background only, no people, no face, no human identity, no text, no watermark.'), 'Varian 0: Mempertahankan penutup default');
+  assert(var1.includes('Background only, no people, no face, no human identity, no text, no watermark.'), 'Varian 1: Mempertahankan penutup default');
+  assert(var2.includes('Background only, no people, no face, no human identity, no text, no watermark.'), 'Varian 2: Mempertahankan penutup default');
+
+  // 6. Verifikasi Struktur Card UI: renderBackgroundAnalysisCard
+  const cardRender = renderBackgroundAnalysisCard({ analysisResult: bgResult });
+  assert(cardRender.html.includes('id="section-suasana-mood"'), 'UI Card: Section 1 Suasana / Mood ter-render');
+  assert(cardRender.html.includes('id="btn-copy-mood"'), 'UI Card: Tombol [COPY] Suasana / Mood tersedia');
+  assert(cardRender.html.includes('id="section-gaya-fotografi"'), 'UI Card: Section 2 Gaya Fotografi ter-render');
+  assert(cardRender.html.includes('id="btn-copy-photo-style"'), 'UI Card: Tombol [COPY] Gaya Fotografi tersedia');
+  assert(cardRender.html.includes('id="section-hubungan-subjek"'), 'UI Card: Section 3 Hubungan Subjek & Latar ter-render');
+  assert(cardRender.html.includes('id="btn-copy-subject-placement"'), 'UI Card: Tombol [COPY] Hubungan Subjek & Latar tersedia');
+  assert(cardRender.html.includes('id="section-outfit-ref"'), 'UI Card: Section 4 Referensi Outfit Subjek ter-render');
+  assert(cardRender.html.includes('id="btn-copy-outfit"'), 'UI Card: Tombol [COPY OUTFIT] tersedia');
+  assert(cardRender.html.includes('id="section-bg-elements"'), 'UI Card: Section 5 Elemen Background ter-render');
+  assert(cardRender.html.includes('id="btn-copy-bg-elements"'), 'UI Card: Tombol [COPY] Elemen Background tersedia');
+  assert(cardRender.html.includes('id="section-bg-spatial"'), 'UI Card: Section 6 Komposisi & Spatial Relationship ter-render');
+  assert(cardRender.html.includes('id="btn-copy-composition-spatial"'), 'UI Card: Tombol [COPY] Komposisi & Spatial Relationship tersedia');
+
+  // Verifikasi Patch Reposisi Tombol COPY ke Area Ringkasan (5 Section Target)
+  const targetSectionIds = [
+    { secId: 'section-suasana-mood', btnId: 'btn-copy-mood', name: 'Suasana / Mood' },
+    { secId: 'section-gaya-fotografi', btnId: 'btn-copy-photo-style', name: 'Gaya Fotografi' },
+    { secId: 'section-hubungan-subjek', btnId: 'btn-copy-subject-placement', name: 'Hubungan Subjek & Latar' },
+    { secId: 'section-outfit-ref', btnId: 'btn-copy-outfit', name: 'Referensi Outfit Subjek' },
+    { secId: 'section-bg-spatial', btnId: 'btn-copy-composition-spatial', name: 'Komposisi & Spatial Relationship' }
+  ];
+
+  for (const { secId, btnId, name } of targetSectionIds) {
+    const secHtml = cardRender.html.split(`id="${secId}"`)[1]?.split('</div>\n\n        <!--')[0] || '';
+    const headerMatch = secHtml.match(/<div style="display: flex; justify-content: space-between; align-items: center; border-bottom:[\s\S]*?<\/div>\s*<\/div>/);
+    const headerPart = headerMatch ? headerMatch[0] : '';
+    assert(!headerPart.includes('<button'), `Reposisi COPY: Header ${name} TIDAK lagi memuat tombol COPY`);
+    assert(secHtml.includes('class="summary-box"'), `Reposisi COPY: Section ${name} memiliki .summary-box`);
+    assert(secHtml.includes(`id="${btnId}"`), `Reposisi COPY: Tombol ${btnId} tersedia di dalam section ${name}`);
+    assert(secHtml.indexOf('class="summary-box"') < secHtml.indexOf(`id="${btnId}"`), `Reposisi COPY: Tombol ${btnId} berada di dalam area ringkasan ${name}`);
+    const btnCount = (secHtml.match(new RegExp(`id="${btnId}"`, 'g')) || []).length;
+    assert(btnCount === 1, `Reposisi COPY: Tombol ${btnId} hanya muncul 1 kali pada section ${name}`);
+  }
+
+  // Verifikasi bahwa bindEvents menyalin ISI RINGKASAN saja
+  let copiedMood = null;
+  let copiedPhoto = null;
+  let copiedRel = null;
+  let copiedOutfit = null;
+  let copiedSpatial = null;
+
+  const interactiveCard = renderBackgroundAnalysisCard({
+    analysisResult: bgResult,
+    onCopyMood: (txt) => { copiedMood = txt; },
+    onCopyPhotographyStyle: (txt) => { copiedPhoto = txt; },
+    onCopySubjectPlacement: (txt) => { copiedRel = txt; },
+    onCopyOutfit: (txt) => { copiedOutfit = txt; },
+    onCopyCompositionSpatial: (txt) => { copiedSpatial = txt; }
+  });
+
+  const mockElements = {
+    '#btn-copy-mood': { innerHTML: '📋 COPY', style: {} },
+    '#btn-copy-photo-style, #btn-copy-photography-style': { innerHTML: '📋 COPY', style: {} },
+    '#btn-copy-subject-placement, #btn-copy-subject-background-rel': { innerHTML: '📋 COPY', style: {} },
+    '#btn-copy-outfit': { innerHTML: '📋 COPY', style: {} },
+    '#btn-copy-bg-elements': { innerHTML: '📋 COPY', style: {} },
+    '#btn-copy-composition-spatial': { innerHTML: '📋 COPY', style: {} }
+  };
+
+  interactiveCard.bindEvents({
+    querySelector: (sel) => {
+      const el = mockElements[sel] || { innerHTML: '', style: {}, addEventListener: () => {} };
+      el.addEventListener = (evt, fn) => { el.onClick = fn; };
+      return el;
+    }
+  });
+
+  mockElements['#btn-copy-mood'].onClick?.();
+  mockElements['#btn-copy-photo-style, #btn-copy-photography-style'].onClick?.();
+  mockElements['#btn-copy-subject-placement, #btn-copy-subject-background-rel'].onClick?.();
+  mockElements['#btn-copy-outfit'].onClick?.();
+  mockElements['#btn-copy-composition-spatial'].onClick?.();
+
+  assert(copiedMood === (bgResult.suasanaMood.summary || bgResult.suasanaMood.atmosphere), 'Behavior COPY: Suasana / Mood hanya menyalin isi ringkasan');
+  assert(copiedPhoto === bgResult.gayaFotografi.summary, 'Behavior COPY: Gaya Fotografi hanya menyalin isi ringkasan');
+  assert(copiedRel === bgResult.hubunganSubjekLatar.spatialSummary, 'Behavior COPY: Hubungan Subjek & Latar hanya menyalin ringkasan deskripsi spasial alami');
+  assert(copiedOutfit === bgResult.referensiOutfitSubjek.summary, 'Behavior COPY: Referensi Outfit hanya menyalin isi ringkasan');
+  assert(copiedSpatial === bgResult.komposisiSpatial.summary, 'Behavior COPY: Komposisi & Spatial hanya menyalin isi ringkasan');
+
+  // Kontrol Prompt Optimal
+  assert(cardRender.html.includes('id="card-optimal-prompt"'), 'UI Card: Card 2 PROMPT ANALISA OPTIMAL ter-render');
+  assert(cardRender.html.includes('id="btn-edit-optimal-prompt"'), 'UI Card: Tombol [EDIT PROMPT] tersedia');
+  assert(cardRender.html.includes('id="btn-regenerate-optimal-prompt"'), 'UI Card: Tombol [REGENERATE] tersedia');
+  assert(cardRender.html.includes('id="btn-copy-optimal-prompt"'), 'UI Card: Tombol [COPY PROMPT] tersedia');
+  assert(cardRender.html.includes('id="optimal-prompt-edit-textarea"'), 'UI Card: Inline edit textarea tersedia');
+
+  // 7. Verifikasi Integrasi Shorthand Analyzer Berjalan Langsung Berdasarkan Prompt Optimal
+  const geminiSvc = new GeminiService(INITIAL_SHORTHAND_CATALOG);
+  const bgServiceRes = await geminiSvc.analyzeBackground({
+    imageFile: mockImage,
+    targetAspectRatio: '16:9'
+  });
+  assert(Boolean(bgServiceRes.optimalPrompt), 'Shorthand Analyzer: Memiliki Prompt Analisa Optimal sebagai target analisa shorthand');
+  assert(Array.isArray(bgServiceRes.installedShorthands) && bgServiceRes.installedShorthands.length > 0, 'Shorthand Analyzer: Shorthand relevan otomatis terdeteksi dari Prompt Optimal');
+  assert(Array.isArray(bgServiceRes.recommendations), 'Shorthand Analyzer: Rekomendasi shorthand (Kelompok 1) dihasilkan');
+  assert(Array.isArray(bgServiceRes.similarShorthands), 'Shorthand Analyzer: Shorthand serupa / alternatif (Kelompok 2) dihasilkan');
+  assert(Array.isArray(bgServiceRes.conflicts), 'Shorthand Analyzer: Deteksi konflik (Kelompok 3) dihasilkan');
+  assert(Array.isArray(bgServiceRes.exclusions), 'Shorthand Analyzer: Shorthand tidak diperlukan (Kelompok 4) dihasilkan');
+
+  // 8. Verifikasi AnalyzerPage Me-render Alur Lengkap: Background Card + Banner Shorthand + 4 Kelompok Shorthand
+  const fullPage = renderAnalyzerPage({
+    analysisResult: bgServiceRes,
+    activeMode: 'BACKGROUND_ANALYSIS',
+    shorthandCatalog: INITIAL_SHORTHAND_CATALOG
+  });
+  assert(fullPage.html.includes('EXISTING PROMPT SHORTHAND ANALYZER'), 'AnalyzerPage: Banner EXISTING PROMPT SHORTHAND ANALYZER ditampilkan');
+  assert(fullPage.html.includes('id="card-primary-shorthands"'), 'AnalyzerPage: Card Shorthand Relevan ditampilkan');
+  assert(fullPage.html.includes('id="card-similar-shorthands"'), 'AnalyzerPage: Card Shorthand Alternatif ditampilkan');
+  assert(fullPage.html.includes('id="card-exclusions"'), 'AnalyzerPage: Card Shorthand Tidak Diperlukan ditampilkan');
+}
 
 console.log('\n==================================================');
 console.log(`HASIL AKHIR: ${passed} PASSED, ${failed} FAILED`);

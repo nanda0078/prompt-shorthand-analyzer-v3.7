@@ -1,4 +1,4 @@
-package com.sevenprojectchannel.promptshorthand.v36
+package com.sevenprojectchannel.promptshorthand.v37
 
 import android.annotation.SuppressLint
 import android.app.Activity
