@@ -429,6 +429,55 @@ Jawab HANYA dalam format JSON valid tanpa markdown formatting:
   }
 
   /**
+   * Smart Auto-Fill Shorthand Metadata via Gemini (Optional Online Enhancement)
+   * Hanya aktif jika Gemini tersambung (CONNECTED) dan API key valid.
+   * Mengembalikan null jika offline/gagal agar sistem fallback mulus ke local rule engine.
+   */
+  async analyzeShorthandMetadata({ code, description }) {
+    const key = StorageService.getApiKey().trim();
+    if (!key || this.status !== GEMINI_STATUS.CONNECTED) {
+      return null;
+    }
+    const model = StorageService.getModel() || 'gemini-2.0-flash';
+    const cleanModel = model.replace(/^models\//, '');
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${encodeURIComponent(key)}`;
+
+    const promptText = `Analisis shorthand berikut dan petakan metadata semantiknya:
+Kode: "${code}"
+Deskripsi: "${description}"
+
+Pilihan Kategori valid: LOCK_PRESERVATION, FACE_IDENTITY, HAIR, HEADWEAR, OUTFIT, BODY_POSE, BACKGROUND, LIGHTING, IMAGE_QUALITY, COLOR_TONE, CANVAS_RATIO, TRANSPARENCY, OBJECT_EDITING, STYLE_EFFECT.
+
+Format JSON yang wajib dikembalikan:
+{
+  "name": "Nama Shorthand Representatif",
+  "category": "KATEGORI_VALID",
+  "target": "Target Area spesifik (Wajah/Rambut/Pakaian/Latar/dll)",
+  "functionGroup": "Grup fungsi semantik (misal: FACE_PRESERVATION, HAIR_EDIT, BACKGROUND_REMOVAL, dll)",
+  "semanticTriggers": ["kata1", "kata2", "kata3"]
+}`;
+
+    try {
+      const requestBody = {
+        contents: [{ role: 'user', parts: [{ text: promptText }] }],
+        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+      };
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) return null;
+      return this.extractJson(rawText);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Ensure AI response enriches catalog and seamlessly provides recommendations
    */
   mergeAiWithCatalog(aiResult, rawPrompt, installedOverrides) {

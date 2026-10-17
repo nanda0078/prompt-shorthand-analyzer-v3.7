@@ -11,6 +11,7 @@
  */
 
 import { SHORTHAND_CATEGORIES, filterCatalogKnowledgeBase, FUNCTION_GROUPS } from '../data/catalogData.js';
+import { executeSmartAutoFill } from '../lib/shorthandAutoFiller.js';
 
 export function renderCatalogPage({
   catalog = [],
@@ -24,6 +25,7 @@ export function renderCatalogPage({
   isAddModalOpen = false,
   isImportModalOpen = false,
   duplicateWarning = null,
+  geminiService = null,
   onSelectCategory,
   onSelectTarget,
   onSelectRecLevel,
@@ -294,6 +296,31 @@ export function renderCatalogPage({
                   </p>
                 </div>
               ` : ''}
+
+              <!-- SMART AUTO-FILL SECTION -->
+              <div class="autofill-section" style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: var(--radius-sm); padding: 0.85rem;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
+                  <strong style="color: #818cf8; font-size: 0.82rem; letter-spacing: 0.04em; display: flex; align-items: center; gap: 0.35rem;">
+                    ✨ SMART AUTO-FILL — ISI METADATA OTOMATIS
+                  </strong>
+                </div>
+                <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0 0 0.55rem 0; line-height: 1.4;">
+                  Masukkan kode dan arti shorthand. Sistem akan membantu mengisi kolom metadata yang tersedia. Hasil dapat diperiksa dan diedit sebelum disimpan.
+                </p>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                  <div style="flex: 1; min-width: 220px;">
+                    <label class="detail-label" for="autofill-raw-input" style="font-size: 0.7rem; margin-bottom: 0.2rem; display: block;">Kode Shorthand dan Deskripsi</label>
+                    <input type="text" id="autofill-raw-input" class="input-primary" style="width: 100%;" 
+                           placeholder="/facelock — mempertahankan identitas wajah" />
+                  </div>
+                  <div style="display: flex; align-items: flex-end;">
+                    <button type="button" id="btn-run-autofill" class="btn btn-primary btn-sm" style="height: 38px; white-space: nowrap;">
+                      ✨ Isi Otomatis
+                    </button>
+                  </div>
+                </div>
+                <div id="autofill-status-msg" style="display: none; font-size: 0.75rem; margin-top: 0.6rem; border-radius: var(--radius-sm); padding: 0.55rem 0.75rem;"></div>
+              </div>
 
               <div class="grid-2">
                 <div>
@@ -597,6 +624,158 @@ export function renderCatalogPage({
       if (addBackdrop) {
         addBackdrop.addEventListener('click', (e) => {
           if (e.target === addBackdrop) addCloseHandler();
+        });
+      }
+
+      // Smart Auto-Fill Shorthand Metadata
+      const btnAutofill = container.querySelector('#btn-run-autofill');
+      const inputAutofill = container.querySelector('#autofill-raw-input');
+      const statusMsg = container.querySelector('#autofill-status-msg');
+
+      if (btnAutofill && inputAutofill) {
+        const handleAutoFillAction = async () => {
+          const rawText = inputAutofill.value.trim();
+          if (!rawText) {
+            if (statusMsg) {
+              statusMsg.style.display = 'block';
+              statusMsg.style.background = 'rgba(239, 68, 68, 0.15)';
+              statusMsg.style.border = '1px solid #ef4444';
+              statusMsg.style.color = '#fca5a5';
+              statusMsg.innerHTML = '⚠️ Masukkan kode dan deskripsi terlebih dahulu (misal: <code>/facelock — mempertahankan identitas wajah</code>).';
+            }
+            return;
+          }
+
+          const elCode = container.querySelector('#add-code');
+          const elName = container.querySelector('#add-name');
+          const elCategory = container.querySelector('#add-category');
+          const elTarget = container.querySelector('#add-target');
+          const elFuncGroup = container.querySelector('#add-func-group');
+          const elDesc = container.querySelector('#add-desc');
+          const elTriggers = container.querySelector('#add-triggers');
+          const elEquivalent = container.querySelector('#add-equivalent');
+
+          const existingValues = {
+            code: elCode ? elCode.value.trim() : '',
+            name: elName ? elName.value.trim() : '',
+            category: elCategory ? elCategory.value : '',
+            target: elTarget ? elTarget.value.trim() : '',
+            functionGroup: elFuncGroup ? elFuncGroup.value.trim() : '',
+            description: elDesc ? elDesc.value.trim() : '',
+            triggers: elTriggers ? elTriggers.value.trim() : '',
+            equivalent: elEquivalent ? elEquivalent.value.trim() : ''
+          };
+
+          const result = executeSmartAutoFill(rawText, catalog, existingValues);
+          if (!result.success) {
+            if (statusMsg) {
+              statusMsg.style.display = 'block';
+              statusMsg.style.background = 'rgba(239, 68, 68, 0.15)';
+              statusMsg.style.border = '1px solid #ef4444';
+              statusMsg.style.color = '#fca5a5';
+              statusMsg.innerHTML = `⚠️ <strong>Format Belum Sesuai:</strong> ${result.error}`;
+            }
+            return;
+          }
+
+          // Isi kolom-kolom form secara non-destruktif
+          if (elCode) elCode.value = result.metadata.code;
+          if (elName) elName.value = result.metadata.name;
+          if (elCategory && result.metadata.category) elCategory.value = result.metadata.category;
+          if (elTarget && result.metadata.target) elTarget.value = result.metadata.target;
+          if (elFuncGroup && result.metadata.functionGroup) elFuncGroup.value = result.metadata.functionGroup;
+          if (elDesc && result.metadata.description) elDesc.value = result.metadata.description;
+          if (elTriggers && result.metadata.semanticTriggers.length > 0) {
+            elTriggers.value = result.metadata.semanticTriggers.join(', ');
+          }
+          if (elEquivalent) {
+            elEquivalent.value = result.metadata.equivalentTo.join(', ');
+          }
+
+          // Tampilkan status tinjauan
+          if (statusMsg) {
+            statusMsg.style.display = 'block';
+            statusMsg.style.background = result.isDuplicate ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.12)';
+            statusMsg.style.border = result.isDuplicate ? '1px solid #f59e0b' : '1px solid #10b981';
+            statusMsg.style.color = '#ffffff';
+
+            const badges = [];
+            if (result.isDuplicate) {
+              badges.push(`<span style="color: #fbbf24;">⚠️ Kode <b>${result.metadata.code}</b> sudah ada di katalog</span>`);
+            } else {
+              badges.push(`<span style="color: #4ade80;">✅ Kode: <b>${result.metadata.code}</b></span>`);
+            }
+            if (result.metadata.category) {
+              badges.push(`Kategori: <b>${result.metadata.category}</b>`);
+            } else {
+              badges.push(`<span style="color: #fbbf24;">Kategori: Perlu Tinjauan Manual</span>`);
+            }
+            if (result.metadata.target) {
+              badges.push(`Target: <b>${result.metadata.target}</b>`);
+            }
+            if (result.metadata.functionGroup) {
+              badges.push(`Group: <b>${result.metadata.functionGroup}</b>`);
+            }
+            if (result.metadata.equivalentTo.length > 0) {
+              badges.push(`Alias Terverifikasi: <b>${result.metadata.equivalentTo.join(', ')}</b>`);
+            }
+
+            statusMsg.innerHTML = `
+              <div style="font-size: 0.8rem; margin-bottom: 0.25rem;">
+                ${result.isDuplicate ? '⚠️ <strong>Peringatan Duplikasi Shorthand:</strong>' : '✨ <strong>Kolom Metadata Berhasil Diisi Otomatis:</strong>'}
+              </div>
+              <div style="font-size: 0.75rem; color: #e2e8f0; line-height: 1.45;">
+                ${badges.join(' | ')}
+              </div>
+              <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.35rem;">
+                * Kolom di bawah tetap dapat ditinjau dan diedit manual. Tekan <strong>Simpan Shorthand</strong> untuk menyimpan.
+              </div>
+            `;
+          }
+
+          // Opsional: Pengayaan semantik Gemini jika online & tersambung
+          if (geminiService && typeof geminiService.getStatus === 'function') {
+            const statusObj = geminiService.getStatus();
+            if (statusObj && statusObj.status === 'CONNECTED' && typeof geminiService.analyzeShorthandMetadata === 'function') {
+              try {
+                const aiEnriched = await geminiService.analyzeShorthandMetadata({
+                  code: result.metadata.code,
+                  description: result.metadata.description
+                });
+                if (aiEnriched) {
+                  if (aiEnriched.category && elCategory && !result.metadata.category) {
+                    elCategory.value = aiEnriched.category;
+                  }
+                  if (aiEnriched.target && elTarget && !result.metadata.target) {
+                    elTarget.value = aiEnriched.target;
+                  }
+                  if (aiEnriched.functionGroup && elFuncGroup && !result.metadata.functionGroup) {
+                    elFuncGroup.value = aiEnriched.functionGroup;
+                  }
+                  if (Array.isArray(aiEnriched.semanticTriggers) && aiEnriched.semanticTriggers.length > 0 && elTriggers) {
+                    const combined = Array.from(new Set([...result.metadata.semanticTriggers, ...aiEnriched.semanticTriggers]));
+                    elTriggers.value = combined.join(', ');
+                  }
+                  if (statusMsg) {
+                    const note = statusMsg.querySelector('div:last-child');
+                    if (note) {
+                      note.innerHTML += ' <span style="color: #60a5fa;">(Diperkaya oleh Gemini AI)</span>';
+                    }
+                  }
+                }
+              } catch (_) {
+                // Graceful fallback: abaikan kegagalan AI, pertahankan hasil local engine
+              }
+            }
+          }
+        };
+
+        btnAutofill.addEventListener('click', handleAutoFillAction);
+        inputAutofill.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            handleAutoFillAction();
+          }
         });
       }
 

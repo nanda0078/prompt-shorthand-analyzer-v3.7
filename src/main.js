@@ -1100,6 +1100,7 @@ class App {
         isAddModalOpen: this.isAddModalOpen,
         isImportModalOpen: this.isImportModalOpen,
         duplicateWarning: this.duplicateWarning,
+        geminiService: this.geminiService,
         onSelectCategory: (cat) => {
           this.catalogCategory = cat;
           this.catalogCurrentPage = 1;

@@ -12,6 +12,7 @@ import { v3CorePatch } from '../src/patches/v3CorePatch.js';
 import { DictionaryService } from '../src/services/dictionaryService.js';
 import { GeminiService } from '../src/services/geminiService.js';
 import { StorageService } from '../src/services/storageService.js';
+import { runAutoFillerTests } from './shorthandAutoFiller.test.js';
 import { renderConflictBanner } from '../src/components/ConflictBanner.js';
 import { renderExcludedShorthands } from '../src/components/ExcludedShorthands.js';
 import { renderPromptInput } from '../src/components/PromptInput.js';
@@ -3410,6 +3411,10 @@ console.log('\n--- VERIFIKASI MASTER PATCH: BACKGROUND ANALYZER AI + PROMPT ANAL
   assert(fullPage.html.includes('id="card-similar-shorthands"'), 'AnalyzerPage: Card Shorthand Alternatif ditampilkan');
   assert(fullPage.html.includes('id="card-exclusions"'), 'AnalyzerPage: Card Shorthand Tidak Diperlukan ditampilkan');
 }
+
+const autoFillerRes = await runAutoFillerTests();
+passed += autoFillerRes.passed;
+failed += autoFillerRes.failed;
 
 console.log('\n==================================================');
 console.log(`HASIL AKHIR: ${passed} PASSED, ${failed} FAILED`);
